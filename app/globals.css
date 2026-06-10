@@ -1,0 +1,66 @@
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css");
+
+:root {
+  --bg: #0b0d12;
+  --surface: #11141b;
+  --surface-soft: #161a23;
+  --border: #232836;
+  --border-strong: #2e3444;
+  --text: #e6e9ef;
+  --text-soft: #c8cee0;
+  --muted: #a4adbd;
+  --muted-soft: #6b7280;
+  --primary: #7aa2ff;
+  --primary-strong: #9bb6ff;
+  --primary-grad: linear-gradient(135deg, #7aa2ff 0%, #9c7aff 100%);
+  --primary-weak: rgba(122, 162, 255, 0.12);
+  --primary-border: #35406b;
+  --good: #4ade80;
+  --good-strong: #86efac;
+  --good-weak: rgba(74, 222, 128, 0.12);
+  --good-border: #2b5a3f;
+  --warn: #fbbf24;
+  --warn-weak: rgba(251, 191, 36, 0.1);
+  --warn-border: #5c4715;
+  --danger: #f87171;
+  --danger-weak: rgba(248, 113, 113, 0.1);
+  --danger-border: #5c2b2d;
+  --purple: #c4a8ff;
+  --purple-weak: rgba(156, 122, 255, 0.12);
+  --purple-border: #463a6b;
+  --radius-lg: 18px;
+  --radius: 14px;
+  --radius-sm: 11px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--bg);
+  background-image: radial-gradient(1200px 600px at 50% -10%, #11141b, #0b0d12);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+    system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo",
+    "Noto Sans KR", "Malgun Gothic", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
