@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>작업계획서 — 분류 근로자 내역 초기화 버그</title>
+<script id="plan-data">
+const PLAN = {
+  title: '분류 > 근로자 내역 > 초기화하기 동작 이상 수정',
+  type: 'bugfix',
+  scope: 'API',
+  status: 'planning', // planning | in-progress | done
+  summary: '초기화는 "원천(baseline v1) 복원"으로 의도 설계됨(BWKS-679). 그러나 baseline에는 국세청 원천에서 자동 산정된 Y/N(boolean)이 담겨 있어 절대 null이 되지 않고, baseline이 없는 deal은 아예 no-op으로 성공 처리됨. 사용자 기대(null 초기화)와 설계가 불일치.',
+
+  decisions: [
+    {
+      id: 'reset-semantics',
+      title: '초기화의 동작 정의 (핵심 결정)',
+      desc: '재조회 시 Y/N(초단시간·1년미만·단시간)이 어떤 상태가 되어야 하는가. 현재 코드는 baseline 원천 boolean으로 복원하므로 null이 되지 않음.',
+      type: 'single',
+      required: true,
+      options: [
+        { label: '완전 미선택(null)로 초기화', desc: '사용자 요청대로 isMinimumWage/isEmploymentLessThanOneYear/isRegularEmployee를 null로 비움. 프론트 UI는 이미 null=미선택을 지원(현 모달 문구는 수정 필요).', recommended: true },
+        { label: '원천 자동산정값으로 복원', desc: '현 설계 의도 유지(국세청 원천에서 산정된 Y/N로 되돌림). 사용자가 수정한 값만 제거. 단 null은 아님 → 사용자 기대와 다름.' },
+        { label: '둘 다 검토 후 결정', desc: '기획 확인 필요 — PM/도메인 담당과 합의 후 확정' },
+      ],
+    },
+    {
+      id: 'baseline-missing',
+      title: 'baseline(v1) 누락 deal 처리',
+      desc: 'BusinessWorkerModel v1이 없는 deal은 현재 초기화가 조용히 no-op(성공 토스트만)됨. 이 케이스를 어떻게 할지.',
+      type: 'single',
+      required: true,
+      options: [
+        { label: '누락 시에도 명시적 초기화', desc: 'baseline 유무와 무관하게 Y/N 필드를 결정된 값(null 또는 원천 재계산)으로 확실히 반영', recommended: true },
+        { label: '누락 시 원천 재계산 후 복원', desc: 'baseline이 없으면 국세청 원천 재계산을 돌려 baseline을 만든 뒤 복원' },
+        { label: '현행 유지(skip)', desc: 'baseline 없으면 그대로 skip (권장하지 않음)' },
+      ],
+    },
+    {
+      id: 'regression-test',
+      title: '회귀 테스트 범위',
+      desc: 'QA-engineer가 작성할 회귀 테스트 범위.',
+      type: 'single',
+      required: false,
+      options: [
+        { label: '초기화 시나리오 중심', desc: 'PATCH로 Y/N 저장 → DELETE 초기화 → 재조회 시 결정된 상태(null 등) 검증 + baseline 없는 deal 케이스', recommended: true },
+        { label: '근로자 내역 전체', desc: '저장/취소/초기화 전체 플로우 회귀 테스트' },
+        { label: '테스트 생략', desc: '이번엔 수동 검증만' },
+      ],
+    },
+  ],
+}
+</script>
+
+<script id="plan-md" type="text/markdown">
+# 분류 > 근로자 내역 > 초기화하기 동작 이상
+
+> **상태: 원인 확정** — 프론트(console-ip)·백엔드(server-zent-ip) 양쪽 코드 분석 완료. 결론적으로 **프론트엔드 버그 아님**, 백엔드 `deleteWorkerStatus`의 "초기화 = baseline 복원" 설계와 사용자 기대(null 초기화)가 불일치하는 것이 원인.
+
+## 1. 증상
+
+분류 > 근로자 내역에서 **초단시간**(`isMinimumWage`), **1년 미만**(`isEmploymentLessThanOneYear`), **단시간/상용직**(`isRegularEmployee`) 등 Y/N 값을 선택한 뒤 **[초기화하기]**를 눌러도, 미선택(`null`)으로 돌아가지 않고 **기존 값이 그대로 조회됨**.
+
+## 2. 데이터 흐름 (양쪽 코드 확인 완료)
+
+세 경로 모두 **같은 Mongo 컬렉션 `BusinessWorker`** 를 대상으로 합니다.
+
+| 동작 | 경로 | 대상 | 결과 |
+|------|------|------|------|
+| Y/N 선택(저장) | `PATCH /deals/:id/workers/status` | `BusinessWorker.employees[year][idx].isMinimumWage = boolean` | ✅ 즉시 저장 |
+| 초기화 | `DELETE /deals/:id/workers/status` | `BusinessWorker.employees` ← **baseline v1 복원** | ⚠️ null 아님 / 누락 시 no-op |
+| 재조회 | `GET` worker-details | `BusinessWorker.isMinimumWage` 직접 반환 | 옛 값 그대로 보임 |
+
+**프론트(console-ip) — 버그 없음.** 초기화는 `DELETE` 호출 후 재조회하는 설계대로 정상 동작:
+- 저장: `WorkerBusinessAccordion.tsx:292-315` → `PATCH`
+- 초기화: `TotalTableForm.tsx:319-327` → `DELETE`(body 없음), 성공 시 `TotalTableForm.tsx:81-91`에서 재조회
+- 모달 문구: *"수정한 모든 내용을 삭제하고 원천 근로자 내역으로 되돌리시겠습니까?"* (`TotalTableForm.tsx:414-417`)
+
+## 3. 근본 원인 (백엔드 — 확정)
+
+`server-zent-ip/apis/op/src/deals/deal.service.ts`
+
+**① 초기화 = "원천(baseline v1) 복원"으로 의도 설계됨** — `deleteWorkerStatus()` (`deal.service.ts:1468-1519`)
+
+```ts
+const baseline = await this.businessWorkerModelRepository.getBusinessWorkerModelByDealId(deal.id) // version:1
+if (baseline.length === 0) {
+  this.logger.warn(`BusinessWorkerModel baseline 없음 - 초기화 skip`)
+  return true   // ← baseline 없으면 아무것도 안 하고 "성공" 반환
+}
+...
+for (const worker of currentBusinessWorkerData) {
+  const matchingWorker = modelBusinessWorkerData.find((bw) => bw.bmanTin === worker.bmanTin)
+  if (matchingWorker) {
+    const employees = matchingWorker.employees           // ← baseline v1 의 employees
+    await this.businessWorkerModel.updateOne(
+      { bmanTin: matchingWorker.bmanTin, dealId: deal.id },
+      { $set: { employees: employees ?? {}, ... } }      // ← BusinessWorker 를 baseline 값으로 덮어씀
+    )
+  }
+}
+```
+
+이 로직은 2026-05-19 커밋 **`0fe994bb2 fix(BWKS-679)`** 로 추가된 **의도된 설계**입니다. 즉 초기화 = "삭제(null)"가 아니라 **baseline v1 스냅샷으로 복원**.
+
+**② baseline v1 에는 원천에서 자동 산정된 Y/N(boolean)이 들어있음** — 워커 import/재계산 시점에 채워짐
+
+```ts
+// deal.service.ts:345-346
+isMinimumWage: emp.초단시간근로자,            // 국세청 원천 데이터에서 산정된 boolean
+isEmploymentLessThanOneYear: emp.일년미만근로자,
+// → deal.service.ts:366-374 createBusinessWorkerModel(... updatedEmployees ...) 로 baseline v1 에 그대로 저장
+```
+
+**결론(두 갈래로 동일 증상):**
+
+- **(a)** baseline이 있는 deal: 초기화하면 사용자의 PATCH 수정값이 **baseline의 원천 boolean으로 복원**됨 → 절대 `null`이 되지 않음. 원천값과 사용자 선택이 같으면 "그대로 유지"로 보임.
+- **(b)** baseline이 없는 deal: `baseline.length === 0` 가드로 **아무 동작 없이 성공 토스트만** 뜸 → 값이 그대로 남음.
+
+→ **사용자 기대("초기 상태 null로 복원")와 현 설계("baseline 원천 boolean 복원/누락 시 skip")의 불일치.** 프론트의 `// TODO : 서버쪽 before, after content 타입 null 추가 변경 필요` 주석도 이 한계를 이미 인지하고 있음.
+
+### 의도된 동작인가? (사용자 질문에 대한 답)
+
+- **예 — 코드상 의도된 설계입니다.** `deleteWorkerStatus`의 baseline 복원은 BWKS-679로 명시적으로 구현됐고, baseline에 원천 boolean이 담기는 것도 import 로직(`deal.service.ts:345-346`)의 정상 흐름입니다.
+- 다만 그 설계가 **"null 미선택 상태로 초기화"라는 사용자 기대를 충족하지 못하는 것**이 문제입니다. 버그(잘못된 코드)라기보다 **사양(초기화의 정의) 불일치**에 가깝습니다.
+
+## 4. 수정 방안 (결정에 따라 분기)
+
+- **[결정1=null로 초기화] 선택 시**: `deleteWorkerStatus`에서 baseline 복원 대신(또는 복원 후) `isMinimumWage`/`isEmploymentLessThanOneYear`/`isRegularEmployee`를 **명시적으로 `null`로 set**. 스키마가 null 허용인지 확인(`business-worker.schema`), 프론트 모달 문구도 "미선택 상태로 초기화"로 조정.
+- **[결정1=원천값 복원] 선택 시**: 현 설계 유지하되 **baseline 누락 deal(결정2)** 을 보강해 항상 원천 재계산값이 반영되도록 수정.
+- 공통: `baseline.length === 0` 무조건 skip(1479-1481) 경로 보강 (결정2).
+
+## 5. 영향 범위
+
+- `deleteWorkerStatus` 한 메서드 중심 수정 → 저장(PATCH)/특관자·승계 survey 경로엔 영향 없음 (단, DELETE는 현재 `deleteAllEmployeeSurveyContent` 후 survey를 재생성하므로 그 부분은 보존)
+- null 허용 시 **스키마/타입(null)** 및 프론트 표시(이미 `value === null` 분기 있음, `WorkerReportTableItem.tsx:193,199`) 확인 필요
+- 초기화 정의 변경은 다른 화면(근로자 수 카운트 `TotalTableForm.tsx:100-135`의 `hasEmployee` 판정 등)에 파급될 수 있어 회귀 확인 필요
+
+## 6. 작업 배분
+
+| 담당 | 작업 | 의존성 |
+|------|------|--------|
+| **API-engineer** | `deleteWorkerStatus` 수정(결정1·2 반영) + 스키마 null 허용 확인 | 결정 후 |
+| **Front-engineer** | (null 선택 시) 초기화 모달 문구 조정 + null 표시/카운트 확인 | 결정1=null 시에만 |
+| **QA-engineer** | 회귀 테스트 (PATCH→DELETE→재조회, baseline 유/무 케이스) | 수정 후 |
+| **Reviewer** | survey 재생성 보존·카운트 파급·API↔프론트 정합성 검증 | 수정 후 |
+</script>
+
+<style>
+  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
+
+  :root {
+    --bg: #f6f7fb;
+    --bg-grad-1: #eef1fb;
+    --bg-grad-2: #f6f7fb;
+    --surface: #ffffff;
+    --surface-soft: #fbfbfd;
+    --border: #e8eaf0;
+    --border-strong: #d6d9e3;
+    --text: #15171c;
+    --text-soft: #383b44;
+    --muted: #71757f;
+    --muted-soft: #9aa0ab;
+    --primary: #4f46e5;
+    --primary-strong: #4338ca;
+    --primary-grad: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    --primary-weak: #eef1ff;
+    --primary-border: #d4d9ff;
+    --good: #0f9d58;
+    --good-strong: #0b8049;
+    --good-weak: #e9f9f0;
+    --good-border: #b6eccd;
+    --warn: #d97706;
+    --warn-weak: #fff7e8;
+    --warn-border: #f6d588;
+    --danger: #e5484d;
+    --danger-weak: #ffeef0;
+    --danger-border: #f7c4c7;
+    --code-bg: #f1f3f9;
+    --code-fg: #d6336c;
+    --ink: #16181d;
+    --ink-fg: #e6e8ef;
+    --radius-lg: 18px;
+    --radius: 14px;
+    --radius-sm: 11px;
+    --shadow-sm: 0 1px 2px rgba(20, 23, 33, .04), 0 1px 3px rgba(20, 23, 33, .06);
+    --shadow: 0 2px 4px rgba(20, 23, 33, .04), 0 6px 16px -4px rgba(20, 23, 33, .08);
+    --shadow-lg: 0 8px 24px -6px rgba(20, 23, 33, .12), 0 2px 6px rgba(20, 23, 33, .05);
+    --ring: 0 0 0 4px rgba(79, 70, 229, .14);
+    --mono: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+      'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, var(--bg-grad-1), var(--bg-grad-2));
+    background-attachment: fixed;
+    color: var(--text);
+    line-height: 1.6;
+    letter-spacing: -.005em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 44px 20px 220px; }
+
+  header.plan-head {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 30px 30px 26px;
+    box-shadow: var(--shadow);
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+  header.plan-head::before {
+    content: ''; position: absolute; inset: 0 0 auto 0; height: 4px;
+    background: var(--primary-grad);
+  }
+  .plan-head h1 { margin: 4px 0 8px; font-size: 26px; font-weight: 800; letter-spacing: -.025em; line-height: 1.25; }
+  .plan-summary { color: var(--muted); margin: 8px 0 18px; font-size: 15px; line-height: 1.6; }
+  .badges { display: flex; gap: 7px; flex-wrap: wrap; }
+  .badge {
+    font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px;
+    letter-spacing: .01em;
+    background: var(--primary-weak); color: var(--primary); border: 1px solid var(--primary-border);
+  }
+  .badge.type-feature { background:#eef1ff; color:#4f46e5; border-color:#d4d9ff; }
+  .badge.type-bugfix  { background:var(--danger-weak); color:#d3373c; border-color:var(--danger-border); }
+  .badge.type-refactor{ background:#f4f0ff; color:#7c3aed; border-color:#e2d8ff; }
+  .badge.scope { background:var(--surface-soft); color:var(--muted); border-color:var(--border-strong); }
+
+  .statusbar {
+    display:flex; align-items:center; gap:11px;
+    border-radius: var(--radius); padding: 13px 18px; margin: 26px 0;
+    font-size: 14px; font-weight: 600; border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+  }
+  .statusbar.pending { background:var(--warn-weak); border-color:var(--warn-border); color:#9a5b08; }
+  .statusbar.confirmed { background:var(--good-weak); border-color:var(--good-border); color:var(--good-strong); }
+  .statusbar .dot { width:9px; height:9px; border-radius:50%; flex:none; }
+  .statusbar.pending .dot { background:var(--warn); box-shadow: 0 0 0 4px rgba(217,119,6,.14); }
+  .statusbar.confirmed .dot { background:var(--good); box-shadow: 0 0 0 4px rgba(15,157,88,.14); }
+
+  .section-title { font-size: 12px; font-weight: 700; color: var(--muted-soft);
+    text-transform: uppercase; letter-spacing: .08em; margin: 0 0 12px 3px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow .18s, border-color .18s, transform .18s;
+  }
+  .card.unresolved { border-color: var(--warn-border); box-shadow: 0 0 0 3px rgba(217,119,6,.07); }
+  .card.confirmed { border-color: var(--good-border); background: linear-gradient(0deg, var(--good-weak), var(--surface) 60%); }
+  .card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .card-title { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+  .card-desc { color: var(--muted); font-size: 13.5px; margin: 5px 0 17px; line-height: 1.55; }
+  .pick-tag { font-size:11px; font-weight:700; color:var(--muted); white-space:nowrap;
+    border:1px solid var(--border-strong); border-radius:999px; padding:3px 10px; }
+  .pick-tag.done { color:var(--good-strong); border-color:var(--good-border); background:var(--good-weak); }
+
+  .options { display: flex; flex-direction: column; gap: 9px; }
+  .option {
+    display: flex; align-items: flex-start; gap: 13px;
+    border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 13px 15px;
+    cursor: pointer; transition: border-color .14s, background .14s, box-shadow .14s, transform .08s;
+    background: var(--surface);
+  }
+  .option:hover { border-color: var(--border-strong); background: var(--surface-soft); }
+  .option:active { transform: scale(.995); }
+  .option.selected { border-color: var(--primary); background: var(--primary-weak); box-shadow: var(--ring); }
+  .option .marker {
+    flex: none; width: 20px; height: 20px; margin-top: 1px;
+    border: 2px solid var(--border-strong); background:var(--surface); display:grid; place-items:center;
+    transition: border-color .14s, background .14s;
+  }
+  .option[data-type="single"] .marker { border-radius: 50%; }
+  .option[data-type="multi"] .marker { border-radius: 7px; }
+  .option.selected .marker { border-color: var(--primary); background: var(--primary); }
+  .option.selected .marker::after {
+    content: ''; width: 8px; height: 8px; background:#fff; border-radius:2px;
+  }
+  .option[data-type="single"].selected .marker::after { border-radius: 50%; }
+  .option .opt-body { flex: 1; }
+  .opt-label { font-weight: 600; font-size: 14.5px; }
+  .opt-label .rec { font-size:11px; font-weight:700; color:var(--good-strong); margin-left:7px;
+    background:var(--good-weak); border:1px solid var(--good-border); padding:2px 8px; border-radius:999px;
+    vertical-align: middle; }
+  .opt-desc { font-size: 13px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+  .custom-input { margin-top: 9px; width: 100%; border:1.5px solid var(--border-strong);
+    border-radius:9px; padding:9px 11px; font-size:14px; font-family:inherit; display:none;
+    background: var(--surface); color: var(--text); }
+  .custom-input:focus { outline:none; border-color:var(--primary); box-shadow: var(--ring); }
+  .option.selected .custom-input { display:block; }
+
+  .card.confirmed .options { cursor: default; }
+  .card.confirmed .option { cursor: default; }
+  .card.confirmed .option:hover { border-color: var(--border); background: var(--surface); }
+  .card.confirmed .option.selected { border-color: var(--good-border); background: var(--good-weak); box-shadow:none; }
+  .card.confirmed .option.selected .marker { border-color: var(--good); background: var(--good); }
+  .card.confirmed .option:not(.selected) { opacity: .4; }
+
+  .notes-area { width:100%; min-height:74px; border:1.5px solid var(--border-strong); border-radius:var(--radius-sm);
+    padding:12px 14px; font-size:14px; font-family:inherit; resize:vertical; line-height:1.6;
+    background: var(--surface); color: var(--text); }
+  .notes-area:focus { outline:none; border-color:var(--primary); box-shadow: var(--ring); }
+
+  .plan-body {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 36px 40px; box-shadow: var(--shadow); margin-top: 8px;
+  }
+  .plan-body h1, .plan-body h2, .plan-body h3, .plan-body h4, .plan-body h5, .plan-body h6 {
+    line-height: 1.32; letter-spacing: -.02em; margin: 1.5em 0 .55em; font-weight: 700;
+  }
+  .plan-body > :first-child { margin-top: 0; }
+  .plan-body h1 { font-size: 25px; font-weight: 800; border-bottom: 1px solid var(--border); padding-bottom: .35em; }
+  .plan-body h2 { font-size: 20px; padding-bottom: .25em; }
+  .plan-body h2::before { content:''; display:inline-block; width:4px; height:.95em; margin-right:10px;
+    border-radius:2px; background:var(--primary-grad); vertical-align:-2px; }
+  .plan-body h3 { font-size: 16.5px; }
+  .plan-body h4 { font-size: 15px; color: var(--text-soft); }
+  .plan-body p { margin: .65em 0; font-size: 15px; color: var(--text-soft); }
+  .plan-body ul, .plan-body ol { margin: .55em 0; padding-left: 1.4em; font-size: 15px; color: var(--text-soft); }
+  .plan-body li { margin: .3em 0; }
+  .plan-body li::marker { color: var(--muted-soft); }
+  .plan-body strong { font-weight: 700; color: var(--text); }
+  .plan-body code {
+    background: var(--code-bg); color: var(--code-fg); padding: 2px 7px; border-radius: 7px;
+    font-size: 12.8px; font-family: var(--mono);
+  }
+  .plan-body pre.md-code {
+    background: var(--ink); color: var(--ink-fg); border-radius: var(--radius); padding: 16px 18px;
+    overflow-x: auto; margin: .9em 0; box-shadow: var(--shadow-sm); font-size: 12.8px; line-height: 1.6;
+  }
+  .plan-body pre.md-code code { background: none; color: inherit; padding: 0; font-size: inherit; }
+  .plan-body blockquote {
+    margin: .9em 0; padding: 10px 18px; border-left: 3px solid var(--primary);
+    background: var(--primary-weak); color: var(--text-soft); border-radius: 0 10px 10px 0; font-size: 14px;
+  }
+  .plan-body hr { border: none; border-top: 1px solid var(--border); margin: 1.8em 0; }
+  .plan-body a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .plan-body a:hover { text-decoration: underline; }
+  .plan-body table {
+    border-collapse: separate; border-spacing: 0; width: 100%; margin: 1em 0; font-size: 13.5px;
+    display: block; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .plan-body th, .plan-body td { border-bottom: 1px solid var(--border); padding: 9px 13px; text-align: left; vertical-align: top; }
+  .plan-body th { background: var(--surface-soft); font-weight: 700; white-space: nowrap; color: var(--text-soft); }
+  .plan-body tbody tr:last-child td { border-bottom: none; }
+  .plan-body tbody tr:nth-child(even) { background: var(--surface-soft); }
+
+  .actionbar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,.78); backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    border-top: 1px solid var(--border); box-shadow: 0 -4px 24px -8px rgba(20,23,33,.12);
+    padding: 14px 20px;
+  }
+  .actionbar-inner { max-width: 860px; margin: 0 auto; display: flex; align-items: center; gap: 11px; }
+  .status { font-size: 13px; color: var(--muted); flex: 1; }
+  .status b { color: var(--text); font-weight: 700; }
+  button {
+    font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    border-radius: 11px; padding: 11px 18px; border: 1px solid var(--border-strong);
+    background: var(--surface); color: var(--text-soft); transition: filter .14s, background .14s, transform .08s, box-shadow .14s;
+  }
+  button:hover { background: var(--surface-soft); }
+  button:active { transform: scale(.97); }
+  button.primary { background: var(--primary-grad); color:#fff; border-color: transparent;
+    box-shadow: 0 2px 8px -1px rgba(79,70,229,.4); }
+  button.primary:hover { filter: brightness(1.07); }
+  button:disabled { opacity: .45; cursor: not-allowed; transform:none; box-shadow:none; }
+
+  details.preview { margin: 10px 0 24px; }
+  details.preview summary { cursor:pointer; font-size:13px; color:var(--muted); padding:6px 2px;
+    list-style:none; user-select:none; }
+  details.preview summary::-webkit-details-marker { display:none; }
+  details.preview summary::before { content:'▸ '; color:var(--muted-soft); }
+  details.preview[open] summary::before { content:'▾ '; }
+  pre.prompt-out {
+    background:var(--ink); color:var(--ink-fg); border-radius:var(--radius); padding:17px 19px;
+    font-size:13px; line-height:1.65; white-space:pre-wrap; word-break:break-word;
+    font-family: var(--mono); margin: 6px 0 0; box-shadow: var(--shadow-sm);
+  }
+  .toast {
+    position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--ink); color:#fff; padding: 11px 22px; border-radius: 999px;
+    font-size: 14px; font-weight: 600; opacity: 0; pointer-events: none;
+    transition: opacity .22s, transform .22s; box-shadow: var(--shadow-lg); z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0d10;
+      --bg-grad-1: #14161c;
+      --bg-grad-2: #0c0d10;
+      --surface: #16181d;
+      --surface-soft: #1c1f26;
+      --border: #272a32;
+      --border-strong: #353944;
+      --text: #f0f1f4;
+      --text-soft: #c8cbd3;
+      --muted: #9298a4;
+      --muted-soft: #6b7280;
+      --primary: #8b88ff;
+      --primary-strong: #a5a2ff;
+      --primary-grad: linear-gradient(135deg, #7c83ff 0%, #6366f1 100%);
+      --primary-weak: #1d1f3a;
+      --primary-border: #353a6b;
+      --good: #34d399;
+      --good-strong: #6ee7b7;
+      --good-weak: #13251d;
+      --good-border: #265840;
+      --warn: #fbbf24;
+      --warn-weak: #2a2113;
+      --warn-border: #5c4715;
+      --danger: #f87171;
+      --danger-weak: #2a1718;
+      --danger-border: #5c2b2d;
+      --code-bg: #22252e;
+      --code-fg: #ff8fb1;
+      --ink: #04060a;
+      --ink-fg: #dde0e8;
+      --ring: 0 0 0 4px rgba(139, 136, 255, .18);
+    }
+    .badge.type-feature { background:#1d1f3a; color:#a5a2ff; border-color:#353a6b; }
+    .badge.type-bugfix  { background:#2a1718; color:#f87171; border-color:#5c2b2d; }
+    .badge.type-refactor{ background:#241b3a; color:#c4b5fd; border-color:#3f2f63; }
+    .actionbar { background: rgba(22,24,29,.82); }
+    .card.confirmed { background: linear-gradient(0deg, var(--good-weak), var(--surface) 70%); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="plan-head">
+    <h1 id="p-title"></h1>
+    <p class="plan-summary" id="p-summary"></p>
+    <div class="badges">
+      <span class="badge" id="p-type"></span>
+      <span class="badge scope" id="p-scope"></span>
+    </div>
+  </header>
+
+  <p class="section-title" id="body-title" style="display:none">작업계획서 상세</p>
+  <article class="plan-body" id="plan-body" style="display:none"></article>
+
+  <div class="statusbar" id="statusbar"><span class="dot"></span><span id="statusbar-text"></span></div>
+
+  <div id="decisions-wrap">
+    <p class="section-title" id="decisions-title">결정 사항 — 선택 후 하단 [프롬프트로 복사]</p>
+    <div id="decisions"></div>
+
+    <div class="card" id="notes-card">
+      <h3 class="card-title">추가 메모 (선택)</h3>
+      <p class="card-desc">결정 외에 전달할 제약·우선순위·주의사항이 있으면 적어주세요.</p>
+      <textarea class="notes-area" id="notes" placeholder="예: 백엔드 레포 경로 / 인증 완료 여부"></textarea>
+    </div>
+
+    <details class="preview">
+      <summary>복사될 프롬프트 미리보기</summary>
+      <pre class="prompt-out" id="preview"></pre>
+    </details>
+  </div>
+</div>
+
+<div class="actionbar" id="actionbar">
+  <div class="actionbar-inner">
+    <div class="status" id="status"></div>
+    <button id="btn-json">JSON 복사</button>
+    <button class="primary" id="btn-copy">프롬프트로 복사</button>
+  </div>
+</div>
+<div class="toast" id="toast">복사되었습니다</div>
+
+<script>
+(function () {
+  const state = {};
+
+  const el = (tag, cls, html) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (html != null) node.innerHTML = html;
+    return node;
+  };
+  const escapeText = (str) => String(str).replace(/[&<>"]/g, (ch) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+  const decidedList = (dec) => {
+    if (dec.decided == null) return null;
+    return Array.isArray(dec.decided) ? dec.decided : [dec.decided];
+  };
+  const isConfirmed = (dec) => decidedList(dec) !== null;
+  const allConfirmed = () => PLAN.decisions.length > 0 &&
+    PLAN.decisions.every((dec) => !dec.required || isConfirmed(dec));
+
+  document.getElementById('p-title').textContent = PLAN.title;
+  document.getElementById('p-summary').textContent = PLAN.summary || '';
+  const typeBadge = document.getElementById('p-type');
+  typeBadge.textContent = PLAN.type;
+  typeBadge.classList.add('type-' + PLAN.type);
+  document.getElementById('p-scope').textContent = '영향 범위: ' + PLAN.scope;
+
+  const container = document.getElementById('decisions');
+  PLAN.decisions.forEach((dec) => {
+    const confirmed = isConfirmed(dec);
+    const preset = decidedList(dec) || [];
+    state[dec.id] = { picks: new Set(preset), custom: '' };
+
+    const card = el('div', 'card' + (confirmed ? ' confirmed' : ''));
+    card.dataset.id = dec.id;
+    const reqMark = dec.required ? ' *' : '';
+    card.appendChild(el('div', 'card-head',
+      '<h3 class="card-title">' + escapeText(dec.title) + reqMark + '</h3>' +
+      '<span class="pick-tag">' + (dec.type === 'multi' ? '복수 선택' : '택1') + '</span>'));
+    if (dec.desc) card.appendChild(el('p', 'card-desc', escapeText(dec.desc)));
+
+    const opts = el('div', 'options');
+    dec.options.forEach((opt) => {
+      const row = el('div', 'option');
+      row.dataset.type = dec.type;
+      if (preset.includes(opt.label)) row.classList.add('selected');
+      const rec = opt.recommended ? '<span class="rec">추천</span>' : '';
+      const desc = opt.desc ? '<div class="opt-desc">' + escapeText(opt.desc) + '</div>' : '';
+      const customField = opt.custom
+        ? '<input class="custom-input" placeholder="직접 입력" />' : '';
+      row.innerHTML =
+        '<div class="marker"></div>' +
+        '<div class="opt-body"><div class="opt-label">' + escapeText(opt.label) + rec + '</div>' +
+        desc + customField + '</div>';
+      if (!confirmed) {
+        row.addEventListener('click', (ev) => {
+          if (ev.target.classList.contains('custom-input')) return;
+          toggle(dec, opt, row, opts);
+        });
+        const customInput = row.querySelector('.custom-input');
+        if (customInput) customInput.addEventListener('input', () => {
+          state[dec.id].custom = customInput.value;
+          render();
+        });
+      }
+      opts.appendChild(row);
+    });
+    card.appendChild(opts);
+    container.appendChild(card);
+  });
+
+  function toggle(dec, opt, row, opts) {
+    const picks = state[dec.id].picks;
+    if (dec.type === 'single') {
+      picks.clear();
+      opts.querySelectorAll('.option').forEach((node) => node.classList.remove('selected'));
+      picks.add(opt.label);
+      row.classList.add('selected');
+    } else {
+      if (picks.has(opt.label)) { picks.delete(opt.label); row.classList.remove('selected'); }
+      else { picks.add(opt.label); row.classList.add('selected'); }
+    }
+    render();
+  }
+
+  function valueFor(dec) {
+    const st = state[dec.id];
+    const labels = [...st.picks].map((label) => {
+      const opt = dec.options.find((option) => option.label === label);
+      if (opt && opt.custom && st.custom.trim()) return st.custom.trim();
+      return label;
+    });
+    return labels.join(', ');
+  }
+
+  function unresolved() {
+    return PLAN.decisions.filter((dec) => dec.required && state[dec.id].picks.size === 0);
+  }
+
+  function buildPrompt() {
+    const lines = [];
+    lines.push('[작업계획서 결정사항 확정] ' + PLAN.title);
+    lines.push('');
+    lines.push('아래 결정사항으로 위 계획서를 확정하고 진행해주세요.');
+    lines.push('');
+    PLAN.decisions.forEach((dec, idx) => {
+      const val = valueFor(dec) || '(미결정)';
+      lines.push((idx + 1) + '. ' + dec.title + ': ' + val);
+    });
+    const notes = document.getElementById('notes').value.trim();
+    lines.push('');
+    lines.push('추가 메모: ' + (notes || '(없음)'));
+    return lines.join('\n');
+  }
+
+  function buildJson() {
+    const obj = { title: PLAN.title, decisions: {}, notes: document.getElementById('notes').value.trim() };
+    PLAN.decisions.forEach((dec) => { obj.decisions[dec.title] = valueFor(dec); });
+    return JSON.stringify(obj, null, 2);
+  }
+
+  function render() {
+    PLAN.decisions.forEach((dec) => {
+      const card = container.querySelector('[data-id="' + dec.id + '"]');
+      const tag = card.querySelector('.pick-tag');
+      const decided = state[dec.id].picks.size > 0;
+      card.classList.toggle('unresolved', dec.required && !decided && !isConfirmed(dec));
+      if (decided) {
+        tag.classList.add('done');
+        tag.textContent = (isConfirmed(dec) ? '✅ 확정 · ' : '✓ ') + valueFor(dec);
+      } else {
+        tag.classList.remove('done');
+        tag.textContent = dec.type === 'multi' ? '복수 선택' : '택1';
+      }
+    });
+    const left = unresolved();
+    const status = document.getElementById('status');
+    if (left.length === 0) status.innerHTML = '<b>모든 필수 결정 완료.</b> 복사해서 채팅에 붙여넣으세요.';
+    else status.innerHTML = '필수 결정 <b>' + left.length + '개</b> 남음: ' +
+      left.map((dec) => escapeText(dec.title)).join(', ');
+    document.getElementById('btn-copy').disabled = left.length > 0;
+    document.getElementById('preview').textContent = buildPrompt();
+  }
+
+  function applyLifecycle() {
+    const confirmed = allConfirmed();
+    const bar = document.getElementById('statusbar');
+    const barText = document.getElementById('statusbar-text');
+    if (confirmed) {
+      bar.className = 'statusbar confirmed';
+      barText.textContent = '✅ 확정 완료 — 위 작업계획서가 확정되었습니다. (아래 결정 카드는 잠금 표시)';
+      document.getElementById('decisions-title').textContent = '확정된 결정 사항';
+      document.getElementById('notes-card').style.display = 'none';
+      document.querySelector('details.preview').style.display = 'none';
+      document.getElementById('actionbar').style.display = 'none';
+      document.querySelector('.wrap').style.paddingBottom = '60px';
+    } else {
+      bar.className = 'statusbar pending';
+      const left = PLAN.decisions.filter((dec) => dec.required && !isConfirmed(dec)).length;
+      barText.textContent = '결정 대기 — 필수 ' + left + '건을 선택해 [프롬프트로 복사] 후 채팅에 붙여넣어 주세요.';
+    }
+  }
+
+  renderPlanBody();
+  function renderPlanBody() {
+    const raw = (document.getElementById('plan-md').textContent || '').trim();
+    if (!raw) return;
+    document.getElementById('body-title').style.display = '';
+    const body = document.getElementById('plan-body');
+    body.style.display = '';
+    body.innerHTML = miniMarkdown(raw);
+  }
+
+  function mdEscape(str) {
+    return String(str).replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
+  }
+  function mdInline(str) {
+    let out = mdEscape(str);
+    out = out.replace(/`([^`]+)`/g, (m, code) => '<code>' + code + '</code>');
+    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>');
+    return out;
+  }
+  function mdSplitRow(line) {
+    return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+  }
+  function miniMarkdown(src) {
+    const lines = src.replace(/\r\n/g, '\n').split('\n');
+    let html = '';
+    let idx = 0;
+    const isSpecial = (line) =>
+      /^(#{1,6})\s/.test(line) || /^```/.test(line) || /^\s*\|.*\|\s*$/.test(line) ||
+      /^\s*([-*])\s+/.test(line) || /^\s*\d+\.\s+/.test(line) || /^\s*---+\s*$/.test(line) ||
+      /^\s*>/.test(line) || /^\s*$/.test(line);
+
+    while (idx < lines.length) {
+      const line = lines[idx];
+
+      if (/^```/.test(line)) {
+        idx += 1;
+        const buf = [];
+        while (idx < lines.length && !/^```/.test(lines[idx])) { buf.push(lines[idx]); idx += 1; }
+        idx += 1;
+        html += '<pre class="md-code"><code>' + mdEscape(buf.join('\n')) + '</code></pre>';
+        continue;
+      }
+      if (/^\s*\|.*\|\s*$/.test(line) && idx + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[idx + 1])) {
+        const header = mdSplitRow(line);
+        idx += 2;
+        const rows = [];
+        while (idx < lines.length && /^\s*\|.*\|\s*$/.test(lines[idx])) { rows.push(mdSplitRow(lines[idx])); idx += 1; }
+        html += '<table><thead><tr>' + header.map((cell) => '<th>' + mdInline(cell) + '</th>').join('') + '</tr></thead><tbody>';
+        html += rows.map((row) => '<tr>' + row.map((cell) => '<td>' + mdInline(cell) + '</td>').join('') + '</tr>').join('');
+        html += '</tbody></table>';
+        continue;
+      }
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        const level = heading[1].length;
+        html += '<h' + level + '>' + mdInline(heading[2]) + '</h' + level + '>';
+        idx += 1;
+        continue;
+      }
+      if (/^\s*---+\s*$/.test(line)) { html += '<hr>'; idx += 1; continue; }
+      if (/^\s*>\s?/.test(line)) {
+        const buf = [];
+        while (idx < lines.length && /^\s*>\s?/.test(lines[idx])) { buf.push(lines[idx].replace(/^\s*>\s?/, '')); idx += 1; }
+        html += '<blockquote>' + mdInline(buf.join(' ')) + '</blockquote>';
+        continue;
+      }
+      if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
+        const ordered = /^\s*\d+\.\s+/.test(line);
+        const buf = [];
+        while (idx < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[idx])) {
+          buf.push(lines[idx].replace(/^\s*([-*]|\d+\.)\s+/, '')); idx += 1;
+        }
+        const items = buf.map((item) => '<li>' + mdInline(item) + '</li>').join('');
+        html += ordered ? '<ol>' + items + '</ol>' : '<ul>' + items + '</ul>';
+        continue;
+      }
+      if (/^\s*$/.test(line)) { idx += 1; continue; }
+      const buf = [line];
+      idx += 1;
+      while (idx < lines.length && !isSpecial(lines[idx])) { buf.push(lines[idx]); idx += 1; }
+      html += '<p>' + mdInline(buf.join(' ')) + '</p>';
+    }
+    return html;
+  }
+
+  function copy(text) {
+    navigator.clipboard.writeText(text).then(showToast).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); ta.remove(); showToast();
+    });
+  }
+  let toastTimer;
+  function showToast() {
+    const toast = document.getElementById('toast');
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1600);
+  }
+
+  document.getElementById('btn-copy').addEventListener('click', () => copy(buildPrompt()));
+  document.getElementById('btn-json').addEventListener('click', () => copy(buildJson()));
+  document.getElementById('notes').addEventListener('input', render);
+
+  render();
+  applyLifecycle();
+})();
+</script>
+</body>
+</html>

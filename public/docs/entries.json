@@ -1,1 +1,86 @@
-[]
+[
+  {
+    "kind": "plan",
+    "href": "/docs/plans/bugfix/20260605-message-preview-placeholder.html",
+    "title": "환급 상세 > 메세지 전송 모달 > 미리보기 영역 UX 개선",
+    "summary": "메세지 유형 미선택 상태에서 미리보기에 로딩(skeleton)이 뜨는 문제를 안내 문구로 교체한다. (P3)",
+    "category": "bugfix",
+    "categoryLabel": "버그·개선",
+    "scope": "프론트",
+    "status": "planning",
+    "dateIso": "2026-06-05",
+    "dateLabel": "2026.06.05"
+  },
+  {
+    "kind": "plan",
+    "href": "/docs/plans/feature/20260605-classification-url-filter-normalize.html",
+    "title": "분류 > 근로자 내역 URL 필터 구조 전면 정규화",
+    "summary": "근로자 내역 화면의 13개 필터/정렬/보기를 제어하는 URL 파라미터를 정규화한다. URL 제어는 유지(공유·북마크 이점)하되, JSON 통째 인코딩(localSortConfigs)을 개별 파라미터로 평탄화하고 모든 파라미터에 clearOnDefault를 적용해 \"사용자가 실제로 바꾼 필터만\" URL에 남도록 한다. 정렬·보기는 클라이언트 처리이므로 API 변경 없음.",
+    "category": "feature",
+    "categoryLabel": "신규 기능",
+    "scope": "프론트",
+    "status": "planning",
+    "dateIso": "2026-06-05",
+    "dateLabel": "2026.06.05"
+  },
+  {
+    "kind": "plan",
+    "href": "/docs/plans/feature/20260605-근로자내역-필터정렬-UI개선.html",
+    "title": "근로자 내역 — 중복확인 / 정렬 / 보기 필터 UI 개선",
+    "summary": "버튼으로 통일돼 역할이 모호한 3개 필터(중복확인·정렬·보기)를 의미에 맞는 컨트롤(체크박스/세그먼트+방향/세그먼트)로 교체해 다중선택·단일선택을 한눈에 구분되게 만든다.",
+    "category": "feature",
+    "categoryLabel": "신규 기능",
+    "scope": "프론트",
+    "status": "planning",
+    "dateIso": "2026-06-05",
+    "dateLabel": "2026.06.05"
+  },
+  {
+    "kind": "plan",
+    "href": "/docs/plans/feature/20260605-분류-모달-표시방식-개선.html",
+    "title": "분류 단계 모달 표시 방식 개선 (P3)",
+    "summary": "deal/[id]/classification 분류 단계에서 전체페이지로 열리는 \"설문 확인\"·\"고용보험 불러오기\" 팝업을 사용성 좋은 표시 방식(우측 사이드 시트 / 중앙 모달)으로 개선한다.",
+    "category": "feature",
+    "categoryLabel": "신규 기능",
+    "scope": "프론트",
+    "status": "planning",
+    "dateIso": "2026-06-05",
+    "dateLabel": "2026.06.05"
+  },
+  {
+    "kind": "plan",
+    "href": "/docs/plans/bugfix/20260602-classification-worker-reset.html",
+    "title": "분류 > 근로자 내역 > 초기화하기 동작 이상 수정",
+    "summary": "초기화는 \"원천(baseline v1) 복원\"으로 의도 설계됨(BWKS-679). 그러나 baseline에는 국세청 원천에서 자동 산정된 Y/N(boolean)이 담겨 있어 절대 null이 되지 않고, baseline이 없는 deal은 아예 no-op으로 성공 처리됨. 사용자 기대(null 초기화)와 설계가 불일치.",
+    "category": "bugfix",
+    "categoryLabel": "버그·개선",
+    "scope": "API",
+    "status": "planning",
+    "dateIso": "2026-06-02",
+    "dateLabel": "2026.06.02"
+  },
+  {
+    "kind": "plan",
+    "href": "/docs/plans/bugfix/20260602-deal-flow-buttons-즉시반영.html",
+    "title": "DealFlowButtons 단계 변경 즉시 반영 버그 수정",
+    "summary": "deal/[id]/classification 단계 변경 시 발견된 버그 3종(API 500 · DialogTitle 누락 · SWR mutate 타이밍) 수정",
+    "category": "bugfix",
+    "categoryLabel": "버그·개선",
+    "scope": "프론트 (+ API 확인)",
+    "status": "planning",
+    "dateIso": "2026-06-02",
+    "dateLabel": "2026.06.02"
+  },
+  {
+    "kind": "plan",
+    "href": "/docs/plans/bugfix/20260602-근로자내역-취소버튼-변경감지.html",
+    "title": "근로자 내역 취소 버튼 변경 감지 (불필요한 확인 알럿 제거)",
+    "summary": "수정 모드에서 실제 변경이 없으면 취소 시 확인 알럿 없이 즉시 종료하고, 변경이 있을 때만 알럿을 노출한다.",
+    "category": "bugfix",
+    "categoryLabel": "버그·개선",
+    "scope": "프론트",
+    "status": "planning",
+    "dateIso": "2026-06-02",
+    "dateLabel": "2026.06.02"
+  }
+]

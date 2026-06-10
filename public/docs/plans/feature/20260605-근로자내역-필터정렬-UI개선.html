@@ -1,0 +1,1187 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>작업계획서</title>
+<!--
+  ============================================================================
+  BRICS 작업계획서 — 결정 콘솔 + 계획서 뷰 (HTML 단일 파일)
+  ----------------------------------------------------------------------------
+  이 .html 파일 하나가 작업계획서의 단일 소스이자 라이프사이클 전체를 담는다.
+  (별도 .md 파일은 만들지 않는다 — 계획서 본문은 아래 [B] 블록에 직접 작성한다.)
+    (1) 승인 전 → 상단에 계획서 본문이 렌더링되고, 그 아래 "결정 콘솔"에서
+                  선택지를 고르고 [프롬프트로 복사]
+    (2) 확정 후 → 각 결정에 decided 값을 채우면 하단 결정 콘솔이 "✅ 확정" 으로
+                  잠기고, 위쪽 본문이 "읽기용 계획서"로 유지된다.
+
+  사용법 (Team Lead):
+  1) 이 파일을 plans/<유형>/YYYYMMDD-제목.html 로 복사한다.
+  2) 아래 두 블록만 채운다 — 스타일/스크립트(맨 아래)는 건드릴 필요 없다.
+
+     [A] <script id="plan-data"> 의 PLAN 객체
+         - title/type/scope/summary
+         - decisions[] : 본문 "사용자 결정 사항"과 1:1
+           · 승인 전: options[] 만 채운다 (decided 생략)
+           · 확정 후: 각 결정에 decided 를 채운다
+                      (택1이면 문자열, 복수면 배열) → 해당 결정이 "✅ 확정"으로 잠김
+
+     [B] <script id="plan-md" type="text/markdown"> 안에 계획서 본문을 마크다운으로 작성
+         - 이 텍스트가 결정 콘솔 위에 렌더링되어 "보기 좋은 계획서"가 된다.
+         - 이 블록이 계획서 본문의 단일 소스다 (API spec / 화면 설계 / 작업 배분 등).
+
+  지원 마크다운: 제목(#~######), 굵게(**), 인라인코드(`), 코드펜스(```),
+                 표(GFM), 목록(- * 1.), 인용(>), 구분선(---), 링크. (중첩목록 제외)
+  ============================================================================
+-->
+<script id="plan-data">
+const PLAN = {
+  title: '근로자 내역 — 중복확인 / 정렬 / 보기 필터 UI 개선',
+  type: 'feature',
+  scope: '프론트',
+  status: 'planning', // planning | in-progress | done
+  summary: '버튼으로 통일돼 역할이 모호한 3개 필터(중복확인·정렬·보기)를 의미에 맞는 컨트롤(체크박스/세그먼트+방향/세그먼트)로 교체해 다중선택·단일선택을 한눈에 구분되게 만든다.',
+
+  // 본문 "사용자 결정 사항" 과 1:1.
+  decisions: [
+    {
+      id: 'dup-check',
+      title: '근로자 중복 확인 UI ([이름 중복] [생일 중복])',
+      desc: '두 조건을 동시에 켤 수 있는 다중선택(AND 필터). 위쪽 데모에서 직접 눌러보고 선택하세요.',
+      type: 'single',
+      required: true,
+      options: [
+        { label: 'A. 체크박스 그룹', desc: '두 조건 독립 on/off가 가장 직관적. 다중선택임이 명확.', recommended: true },
+        { label: 'B. 토글 스위치 2개', desc: 'on/off 의미는 같으나 "필터 적용" 뉘앙스는 체크박스가 더 익숙.' },
+        { label: 'C. 현행 토글 버튼 유지', desc: '선택 시 색만 바뀌어 체크박스인지 라디오인지 구분이 안 됨.' },
+      ],
+    },
+    {
+      id: 'sort',
+      title: '정렬 UI ([이름] [생년월일] [사업장명] + 오름/내림차순)',
+      desc: '정렬 기준은 택1, 추가로 오름/내림 방향이 필요. 단순 라디오로는 방향을 못 담음.',
+      type: 'single',
+      required: true,
+      options: [
+        { label: 'A. 세그먼트(기준 택1) + 방향 화살표 토글', desc: '기준을 한 줄 세그먼트로 택1, 선택된 기준을 다시 누르면 asc↔desc. 현재 동작 보존 + 단일선택 명확.', recommended: true },
+        { label: 'B. Select 드롭다운(기준) + 방향 토글 버튼', desc: '기준이 늘어나도 공간 절약. 기준 1번 더 클릭(드롭다운)해야 함.' },
+        { label: 'C. 현행 버튼 순환 유지', desc: '버튼 3개가 각각 순환해 동시에 여러 개 활성처럼 보일 수 있음.' },
+      ],
+    },
+    {
+      id: 'view',
+      title: '보기 UI ([전체] [근로자] [사업장])',
+      desc: '항상 정확히 하나만 선택되는 택1(라디오 동작). 항목 3개로 적고 자주 전환.',
+      type: 'single',
+      required: true,
+      options: [
+        { label: 'A. 세그먼트 컨트롤(택1)', desc: '항목 적고 빠른 전환에 최적. 하나만 선택됨이 시각적으로 명확.', recommended: true },
+        { label: 'B. 라디오 그룹', desc: '택1 의미는 가장 명시적이나 가로 공간을 더 차지.' },
+        { label: 'C. Select 드롭다운', desc: '공간은 가장 절약하나 현재 보기 상태가 펼치기 전엔 안 보임.' },
+      ],
+    },
+    {
+      id: 'state-keep',
+      title: '상태 관리 방식 유지 (nuqs URL 쿼리)',
+      desc: 'UI만 교체하고 기존 URL 쿼리 파라미터 / localSortConfigs 구조는 그대로 둘지.',
+      type: 'single',
+      required: false,
+      options: [
+        { label: '유지 (URL 쿼리 그대로)', desc: 'UI만 교체, 북마크/공유/뒤로가기 동작 보존.', recommended: true },
+        { label: '리팩터링 함께', desc: '상태 구조까지 손대면 범위가 커지고 회귀 위험.' },
+      ],
+    },
+  ],
+}
+</script>
+
+<!-- [B] 계획서 본문을 마크다운으로 작성한다. 비워두면 본문 렌더링 영역이 숨겨진다. -->
+<script id="plan-md" type="text/markdown">
+## 배경 — 무엇이 문제인가
+
+`분류 > 근로자 내역` 화면의 필터 3종이 **모두 동일한 `Button` 으로 구현**되어 있어, 사용자가 각 컨트롤의 "선택 규칙"(다중선택인지 택1인지)을 색 변화로만 추측해야 합니다.
+
+| 영역 | 실제 의미 | 현재 구현 | 문제 |
+|------|-----------|-----------|------|
+| 근로자 중복 확인 | **다중선택** (이름·생일 동시 가능) | 토글 버튼 2개 (`type="multiple"`) | 체크박스인지 라디오인지 구분 불가 |
+| 정렬 | **택1 기준 + 방향(asc/desc)** | 버튼 3개 각각 `asc→desc→none` 순환 | 여러 버튼이 동시에 활성처럼 보임 |
+| 보기 | **택1** (전체/근로자/사업장) | 토글 버튼 3개 (`type="multiple"` 이나 택1 동작) | 다중선택 가능한 것처럼 오인 |
+
+> 위 화면 상단의 **"인터랙티브 데모"** 에서 현재(AS-IS)와 개선안을 직접 클릭해 동작/UX를 비교할 수 있습니다.
+
+---
+
+## 개선 방향 (추천안)
+
+1. **근로자 중복 확인 → 체크박스 그룹** — "둘 다 켤 수 있음"이 체크박스 모양으로 즉시 전달됩니다.
+2. **정렬 → 세그먼트(기준 택1) + 방향 화살표 토글** — 기준은 한 줄 세그먼트에서 하나만 선택, 선택된 기준을 다시 누르면 `오름차순 ↔ 내림차순` 전환(현재의 순환 동작 보존). "정렬은 한 기준"이라는 규칙이 명확해집니다.
+3. **보기 → 세그먼트 컨트롤(택1)** — 항목이 3개로 적고 자주 전환하므로, 항상 하나만 선택돼 보이는 세그먼트가 최적입니다.
+
+세 가지 모두 **이미 `@repo/ui` 에 존재하는 컴포넌트**(`Checkbox`, `RadioGroup`/`ToggleGroup`, `Select`)로 구현 가능하며, 상태 관리(`nuqs` URL 쿼리)는 **그대로 유지**합니다.
+
+---
+
+## 영향 범위 (프론트 전용 · API 변경 없음)
+
+수정 대상 파일 (`/Users/joen/Documents/git/brics/console-ip`):
+
+- `apps/works/app/deal/[id]/_components/SelectFilterButtons.tsx` — 중복확인·보기에 쓰이는 공통 컴포넌트
+- `apps/works/app/deal/[id]/_components/SelectUpdownButtons.tsx` — 정렬 컴포넌트
+- `apps/works/app/deal/[id]/classification/_components/EmploymentLocalFilter.tsx` — 위 컴포넌트들을 조립하는 곳
+- (필요 시) `@repo/ui` 의 `checkbox` / `radio-group` / `toggle-group` / `select` 재사용 — 신규 추가 불필요
+
+상태 계약(유지):
+
+- `isDeprecatedName`, `isDeprecatedBirthday` : URL 쿼리 `'true' | 'false'`
+- `localSortConfigs` : `{ sortType: 'name'|'birthday'|'businessName'|'', sort: 'asc'|'desc'|'', viewType: 'all'|'employee'|'business'|'' }`
+
+---
+
+## 화면 설계 (확정안 기준 구현 시)
+
+**중복 확인 (체크박스)**
+
+```tsx
+<div className="flex flex-col gap-2">
+  <Label>근로자 중복 확인</Label>
+  <div className="flex gap-4">
+    <label className="flex items-center gap-2">
+      <Checkbox checked={isDeprecatedName} onCheckedChange={(v) => setQueryParams({ ...queryParams, isDeprecatedName: v ? 'true' : 'false' })} />
+      이름 중복
+    </label>
+    <label className="flex items-center gap-2">
+      <Checkbox checked={isDeprecatedBirthday} onCheckedChange={(v) => setQueryParams({ ...queryParams, isDeprecatedBirthday: v ? 'true' : 'false' })} />
+      생일 중복
+    </label>
+  </div>
+</div>
+```
+
+**정렬 (세그먼트 택1 + 방향 토글)** — 기준 택1은 `ToggleGroup type="single"`, 선택된 기준 재클릭 시 `sort` 를 `asc↔desc` 전환하고 선택 칩 옆에 방향 아이콘 표시.
+
+**보기 (세그먼트 택1)** — `ToggleGroup type="single"` 으로 `viewType` 하나만 활성.
+
+---
+
+## 작업 배분
+
+| 담당 | 작업 | 의존성 |
+|------|------|--------|
+| **Front-engineer** | 위 3개 컴포넌트 UI 교체 + `EmploymentLocalFilter` 연결, 상태 계약 유지 | 없음 (단독) |
+| **QA-engineer** | 중복확인 다중선택 / 정렬 기준·방향 / 보기 택1 동작 회귀 확인 | 프론트 완료 후 |
+| **Reviewer** | 상태 계약(URL 쿼리) 보존 여부, 접근성(label/키보드) 검증 | 프론트 완료 후 |
+
+API 변경이 없어 API-engineer 디스패치는 불필요합니다.
+</script>
+
+<style>
+  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
+
+  :root {
+    --bg: #f6f7fb;
+    --bg-grad-1: #eef1fb;
+    --bg-grad-2: #f6f7fb;
+    --surface: #ffffff;
+    --surface-soft: #fbfbfd;
+    --border: #e8eaf0;
+    --border-strong: #d6d9e3;
+    --text: #15171c;
+    --text-soft: #383b44;
+    --muted: #71757f;
+    --muted-soft: #9aa0ab;
+    --primary: #4f46e5;
+    --primary-strong: #4338ca;
+    --primary-grad: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    --primary-weak: #eef1ff;
+    --primary-border: #d4d9ff;
+    --good: #0f9d58;
+    --good-strong: #0b8049;
+    --good-weak: #e9f9f0;
+    --good-border: #b6eccd;
+    --warn: #d97706;
+    --warn-weak: #fff7e8;
+    --warn-border: #f6d588;
+    --danger: #e5484d;
+    --danger-weak: #ffeef0;
+    --danger-border: #f7c4c7;
+    --code-bg: #f1f3f9;
+    --code-fg: #d6336c;
+    --ink: #16181d;
+    --ink-fg: #e6e8ef;
+    --radius-lg: 18px;
+    --radius: 14px;
+    --radius-sm: 11px;
+    --shadow-sm: 0 1px 2px rgba(20, 23, 33, .04), 0 1px 3px rgba(20, 23, 33, .06);
+    --shadow: 0 2px 4px rgba(20, 23, 33, .04), 0 6px 16px -4px rgba(20, 23, 33, .08);
+    --shadow-lg: 0 8px 24px -6px rgba(20, 23, 33, .12), 0 2px 6px rgba(20, 23, 33, .05);
+    --ring: 0 0 0 4px rgba(79, 70, 229, .14);
+    --mono: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+      'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, var(--bg-grad-1), var(--bg-grad-2));
+    background-attachment: fixed;
+    color: var(--text);
+    line-height: 1.6;
+    letter-spacing: -.005em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 44px 20px 220px; }
+
+  header.plan-head {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 30px 30px 26px;
+    box-shadow: var(--shadow);
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+  header.plan-head::before {
+    content: ''; position: absolute; inset: 0 0 auto 0; height: 4px;
+    background: var(--primary-grad);
+  }
+  .plan-head h1 { margin: 4px 0 8px; font-size: 26px; font-weight: 800; letter-spacing: -.025em; line-height: 1.25; }
+  .plan-summary { color: var(--muted); margin: 8px 0 18px; font-size: 15px; line-height: 1.6; }
+  .badges { display: flex; gap: 7px; flex-wrap: wrap; }
+  .badge {
+    font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px;
+    letter-spacing: .01em;
+    background: var(--primary-weak); color: var(--primary); border: 1px solid var(--primary-border);
+  }
+  .badge.type-feature { background:#eef1ff; color:#4f46e5; border-color:#d4d9ff; }
+  .badge.type-bugfix  { background:var(--danger-weak); color:#d3373c; border-color:var(--danger-border); }
+  .badge.type-refactor{ background:#f4f0ff; color:#7c3aed; border-color:#e2d8ff; }
+  .badge.scope { background:var(--surface-soft); color:var(--muted); border-color:var(--border-strong); }
+
+  /* 상태 배너 */
+  .statusbar {
+    display:flex; align-items:center; gap:11px;
+    border-radius: var(--radius); padding: 13px 18px; margin: 26px 0;
+    font-size: 14px; font-weight: 600; border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+  }
+  .statusbar.pending { background:var(--warn-weak); border-color:var(--warn-border); color:#9a5b08; }
+  .statusbar.confirmed { background:var(--good-weak); border-color:var(--good-border); color:var(--good-strong); }
+  .statusbar .dot { width:9px; height:9px; border-radius:50%; flex:none; }
+  .statusbar.pending .dot { background:var(--warn); box-shadow: 0 0 0 4px rgba(217,119,6,.14); }
+  .statusbar.confirmed .dot { background:var(--good); box-shadow: 0 0 0 4px rgba(15,157,88,.14); }
+
+  .section-title { font-size: 12px; font-weight: 700; color: var(--muted-soft);
+    text-transform: uppercase; letter-spacing: .08em; margin: 0 0 12px 3px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow .18s, border-color .18s, transform .18s;
+  }
+  .card.unresolved { border-color: var(--warn-border); box-shadow: 0 0 0 3px rgba(217,119,6,.07); }
+  .card.confirmed { border-color: var(--good-border); background: linear-gradient(0deg, var(--good-weak), var(--surface) 60%); }
+  .card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .card-title { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+  .card-desc { color: var(--muted); font-size: 13.5px; margin: 5px 0 17px; line-height: 1.55; }
+  .pick-tag { font-size:11px; font-weight:700; color:var(--muted); white-space:nowrap;
+    border:1px solid var(--border-strong); border-radius:999px; padding:3px 10px; }
+  .pick-tag.done { color:var(--good-strong); border-color:var(--good-border); background:var(--good-weak); }
+
+  .options { display: flex; flex-direction: column; gap: 9px; }
+  .option {
+    display: flex; align-items: flex-start; gap: 13px;
+    border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 13px 15px;
+    cursor: pointer; transition: border-color .14s, background .14s, box-shadow .14s, transform .08s;
+    background: var(--surface);
+  }
+  .option:hover { border-color: var(--border-strong); background: var(--surface-soft); }
+  .option:active { transform: scale(.995); }
+  .option.selected { border-color: var(--primary); background: var(--primary-weak); box-shadow: var(--ring); }
+  .option .marker {
+    flex: none; width: 20px; height: 20px; margin-top: 1px;
+    border: 2px solid var(--border-strong); background:var(--surface); display:grid; place-items:center;
+    transition: border-color .14s, background .14s;
+  }
+  .option[data-type="single"] .marker { border-radius: 50%; }
+  .option[data-type="multi"] .marker { border-radius: 7px; }
+  .option.selected .marker { border-color: var(--primary); background: var(--primary); }
+  .option.selected .marker::after {
+    content: ''; width: 8px; height: 8px; background:#fff; border-radius:2px;
+  }
+  .option[data-type="single"].selected .marker::after { border-radius: 50%; }
+  .option .opt-body { flex: 1; }
+  .opt-label { font-weight: 600; font-size: 14.5px; }
+  .opt-label .rec { font-size:11px; font-weight:700; color:var(--good-strong); margin-left:7px;
+    background:var(--good-weak); border:1px solid var(--good-border); padding:2px 8px; border-radius:999px;
+    vertical-align: middle; }
+  .opt-desc { font-size: 13px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+  .custom-input { margin-top: 9px; width: 100%; border:1.5px solid var(--border-strong);
+    border-radius:9px; padding:9px 11px; font-size:14px; font-family:inherit; display:none;
+    background: var(--surface); color: var(--text); }
+  .custom-input:focus { outline:none; border-color:var(--primary); box-shadow: var(--ring); }
+  .option.selected .custom-input { display:block; }
+
+  /* 확정(locked) 카드 — 선택된 것만 강조, 나머지는 흐리게, 클릭 비활성 */
+  .card.confirmed .options { cursor: default; }
+  .card.confirmed .option { cursor: default; }
+  .card.confirmed .option:hover { border-color: var(--border); background: var(--surface); }
+  .card.confirmed .option.selected { border-color: var(--good-border); background: var(--good-weak); box-shadow:none; }
+  .card.confirmed .option.selected .marker { border-color: var(--good); background: var(--good); }
+  .card.confirmed .option:not(.selected) { opacity: .4; }
+
+  .notes-area { width:100%; min-height:74px; border:1.5px solid var(--border-strong); border-radius:var(--radius-sm);
+    padding:12px 14px; font-size:14px; font-family:inherit; resize:vertical; line-height:1.6;
+    background: var(--surface); color: var(--text); }
+  .notes-area:focus { outline:none; border-color:var(--primary); box-shadow: var(--ring); }
+
+  /* 계획서 본문 렌더 */
+  .plan-body {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 36px 40px; box-shadow: var(--shadow); margin-top: 8px;
+  }
+  .plan-body h1, .plan-body h2, .plan-body h3, .plan-body h4, .plan-body h5, .plan-body h6 {
+    line-height: 1.32; letter-spacing: -.02em; margin: 1.5em 0 .55em; font-weight: 700;
+  }
+  .plan-body > :first-child { margin-top: 0; }
+  .plan-body h1 { font-size: 25px; font-weight: 800; border-bottom: 1px solid var(--border); padding-bottom: .35em; }
+  .plan-body h2 { font-size: 20px; padding-bottom: .25em; }
+  .plan-body h2::before { content:''; display:inline-block; width:4px; height:.95em; margin-right:10px;
+    border-radius:2px; background:var(--primary-grad); vertical-align:-2px; }
+  .plan-body h3 { font-size: 16.5px; }
+  .plan-body h4 { font-size: 15px; color: var(--text-soft); }
+  .plan-body p { margin: .65em 0; font-size: 15px; color: var(--text-soft); }
+  .plan-body ul, .plan-body ol { margin: .55em 0; padding-left: 1.4em; font-size: 15px; color: var(--text-soft); }
+  .plan-body li { margin: .3em 0; }
+  .plan-body li::marker { color: var(--muted-soft); }
+  .plan-body strong { font-weight: 700; color: var(--text); }
+  .plan-body code {
+    background: var(--code-bg); color: var(--code-fg); padding: 2px 7px; border-radius: 7px;
+    font-size: 12.8px; font-family: var(--mono);
+  }
+  .plan-body pre.md-code {
+    background: var(--ink); color: var(--ink-fg); border-radius: var(--radius); padding: 16px 18px;
+    overflow-x: auto; margin: .9em 0; box-shadow: var(--shadow-sm); font-size: 12.8px; line-height: 1.6;
+  }
+  .plan-body pre.md-code code { background: none; color: inherit; padding: 0; font-size: inherit; }
+  .plan-body blockquote {
+    margin: .9em 0; padding: 10px 18px; border-left: 3px solid var(--primary);
+    background: var(--primary-weak); color: var(--text-soft); border-radius: 0 10px 10px 0; font-size: 14px;
+  }
+  .plan-body hr { border: none; border-top: 1px solid var(--border); margin: 1.8em 0; }
+  .plan-body a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .plan-body a:hover { text-decoration: underline; }
+  .plan-body table {
+    border-collapse: separate; border-spacing: 0; width: 100%; margin: 1em 0; font-size: 13.5px;
+    display: block; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .plan-body th, .plan-body td { border-bottom: 1px solid var(--border); padding: 9px 13px; text-align: left; vertical-align: top; }
+  .plan-body th { background: var(--surface-soft); font-weight: 700; white-space: nowrap; color: var(--text-soft); }
+  .plan-body tbody tr:last-child td { border-bottom: none; }
+  .plan-body tbody tr:nth-child(even) { background: var(--surface-soft); }
+
+  /* 하단 고정 액션 바 */
+  .actionbar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,.78); backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    border-top: 1px solid var(--border); box-shadow: 0 -4px 24px -8px rgba(20,23,33,.12);
+    padding: 14px 20px;
+  }
+  .actionbar-inner { max-width: 860px; margin: 0 auto; display: flex; align-items: center; gap: 11px; }
+  .status { font-size: 13px; color: var(--muted); flex: 1; }
+  .status b { color: var(--text); font-weight: 700; }
+  button {
+    font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    border-radius: 11px; padding: 11px 18px; border: 1px solid var(--border-strong);
+    background: var(--surface); color: var(--text-soft); transition: filter .14s, background .14s, transform .08s, box-shadow .14s;
+  }
+  button:hover { background: var(--surface-soft); }
+  button:active { transform: scale(.97); }
+  button.primary { background: var(--primary-grad); color:#fff; border-color: transparent;
+    box-shadow: 0 2px 8px -1px rgba(79,70,229,.4); }
+  button.primary:hover { filter: brightness(1.07); }
+  button:disabled { opacity: .45; cursor: not-allowed; transform:none; box-shadow:none; }
+
+  details.preview { margin: 10px 0 24px; }
+  details.preview summary { cursor:pointer; font-size:13px; color:var(--muted); padding:6px 2px;
+    list-style:none; user-select:none; }
+  details.preview summary::-webkit-details-marker { display:none; }
+  details.preview summary::before { content:'▸ '; color:var(--muted-soft); }
+  details.preview[open] summary::before { content:'▾ '; }
+  pre.prompt-out {
+    background:var(--ink); color:var(--ink-fg); border-radius:var(--radius); padding:17px 19px;
+    font-size:13px; line-height:1.65; white-space:pre-wrap; word-break:break-word;
+    font-family: var(--mono); margin: 6px 0 0; box-shadow: var(--shadow-sm);
+  }
+  .toast {
+    position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--ink); color:#fff; padding: 11px 22px; border-radius: 999px;
+    font-size: 14px; font-weight: 600; opacity: 0; pointer-events: none;
+    transition: opacity .22s, transform .22s; box-shadow: var(--shadow-lg); z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* 다크 모드 자동 대응 */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0d10;
+      --bg-grad-1: #14161c;
+      --bg-grad-2: #0c0d10;
+      --surface: #16181d;
+      --surface-soft: #1c1f26;
+      --border: #272a32;
+      --border-strong: #353944;
+      --text: #f0f1f4;
+      --text-soft: #c8cbd3;
+      --muted: #9298a4;
+      --muted-soft: #6b7280;
+      --primary: #8b88ff;
+      --primary-strong: #a5a2ff;
+      --primary-grad: linear-gradient(135deg, #7c83ff 0%, #6366f1 100%);
+      --primary-weak: #1d1f3a;
+      --primary-border: #353a6b;
+      --good: #34d399;
+      --good-strong: #6ee7b7;
+      --good-weak: #13251d;
+      --good-border: #265840;
+      --warn: #fbbf24;
+      --warn-weak: #2a2113;
+      --warn-border: #5c4715;
+      --danger: #f87171;
+      --danger-weak: #2a1718;
+      --danger-border: #5c2b2d;
+      --code-bg: #22252e;
+      --code-fg: #ff8fb1;
+      --ink: #04060a;
+      --ink-fg: #dde0e8;
+      --ring: 0 0 0 4px rgba(139, 136, 255, .18);
+    }
+    .badge.type-feature { background:#1d1f3a; color:#a5a2ff; border-color:#353a6b; }
+    .badge.type-bugfix  { background:#2a1718; color:#f87171; border-color:#5c2b2d; }
+    .badge.type-refactor{ background:#241b3a; color:#c4b5fd; border-color:#3f2f63; }
+    .actionbar { background: rgba(22,24,29,.82); }
+    .card.confirmed { background: linear-gradient(0deg, var(--good-weak), var(--surface) 70%); }
+  }
+
+  /* ===== 인터랙티브 데모 ===== */
+  .demo-intro { font-size: 13.5px; color: var(--muted); margin: 0 0 16px 3px; line-height: 1.6; }
+  .demo-group {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px 22px; margin-bottom: 14px; box-shadow: var(--shadow-sm);
+  }
+  .demo-group > h3 { margin: 0 0 4px; font-size: 16px; font-weight: 700; }
+  .demo-group > .demo-sub { margin: 0 0 16px; font-size: 13px; color: var(--muted); }
+  .variant { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 16px; margin-top: 10px; background: var(--surface-soft); }
+  .variant.asis { border-style: dashed; }
+  .variant.reco { border-color: var(--good-border); background: var(--good-weak); }
+  .variant-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .variant-tag { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+    background: var(--border); color: var(--muted); }
+  .variant.asis .variant-tag { background: var(--danger-weak); color: #c0383c; border: 1px solid var(--danger-border); }
+  .variant.reco .variant-tag { background: var(--good); color: #fff; }
+  .variant-name { font-size: 13.5px; font-weight: 600; color: var(--text-soft); }
+  .demo-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .readout { margin-top: 11px; font-size: 12.5px; color: var(--muted); font-family: var(--mono); }
+  .readout b { color: var(--primary-strong); font-weight: 700; }
+
+  /* 데모용 컨트롤(shadcn 유사) */
+  .d-btn { font-family: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer;
+    border-radius: 8px; padding: 7px 14px; border: 1px solid var(--border-strong);
+    background: var(--surface); color: var(--text-soft); display: inline-flex; align-items: center; gap: 6px;
+    transition: background .12s, border-color .12s, color .12s; }
+  .d-btn:hover { background: var(--surface-soft); }
+  .d-btn.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .d-btn.on-red { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+  .d-check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; color: var(--text-soft);
+    padding: 6px 4px; user-select: none; }
+  .d-check .box { width: 18px; height: 18px; border-radius: 5px; border: 2px solid var(--border-strong);
+    display: grid; place-items: center; background: var(--surface); transition: .12s; }
+  .d-check.on .box { background: var(--primary); border-color: var(--primary); }
+  .d-check .box svg { width: 12px; height: 12px; stroke: #fff; stroke-width: 3.5; opacity: 0; }
+  .d-check.on .box svg { opacity: 1; }
+
+  .d-switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; font-size: 14px; color: var(--text-soft);
+    padding: 6px 4px; user-select: none; }
+  .d-switch .track { width: 38px; height: 22px; border-radius: 999px; background: var(--border-strong); position: relative; transition: .15s; }
+  .d-switch .track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+    border-radius: 50%; background: #fff; transition: .15s; box-shadow: var(--shadow-sm); }
+  .d-switch.on .track { background: var(--primary); }
+  .d-switch.on .track::after { left: 18px; }
+
+  .d-seg { display: inline-flex; background: var(--code-bg); border-radius: 9px; padding: 3px; gap: 2px; }
+  .d-seg .seg { font-family: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer; border: none;
+    background: transparent; color: var(--muted); padding: 6px 14px; border-radius: 7px;
+    display: inline-flex; align-items: center; gap: 5px; transition: .12s; }
+  .d-seg .seg.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); font-weight: 600; }
+  .seg-arrow { font-size: 11px; line-height: 1; }
+
+  .d-radio { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 14px; color: var(--text-soft);
+    padding: 6px 4px; user-select: none; margin-right: 6px; }
+  .d-radio .dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border-strong);
+    display: grid; place-items: center; background: var(--surface); transition: .12s; }
+  .d-radio.on .dot { border-color: var(--primary); }
+  .d-radio.on .dot::after { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--primary); }
+
+  .d-select { font-family: inherit; font-size: 13.5px; padding: 7px 12px; border-radius: 8px;
+    border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="plan-head">
+    <h1 id="p-title"></h1>
+    <p class="plan-summary" id="p-summary"></p>
+    <div class="badges">
+      <span class="badge" id="p-type"></span>
+      <span class="badge scope" id="p-scope"></span>
+    </div>
+  </header>
+
+  <p class="section-title">인터랙티브 데모 — 직접 눌러보세요</p>
+  <p class="demo-intro">각 항목마다 <b>현재(AS-IS)</b>와 <b>개선안</b>을 실제로 클릭해 동작/UX를 비교할 수 있습니다.
+    개선안의 동작이 마음에 들면 아래 <b>결정 콘솔</b>에서 해당 옵션을 고른 뒤 [프롬프트로 복사]하세요.</p>
+
+  <!-- 1. 근로자 중복 확인 -->
+  <div class="demo-group">
+    <h3>① 근로자 중복 확인</h3>
+    <p class="demo-sub">이름·생일 중복을 <b>동시에</b> 켤 수 있는 다중선택(AND 필터).</p>
+
+    <div class="variant asis">
+      <div class="variant-head"><span class="variant-tag">현재</span><span class="variant-name">토글 버튼 — 체크박스인지 라디오인지 모호</span></div>
+      <div class="demo-row" id="dup-asis"></div>
+      <div class="readout" id="dup-asis-out"></div>
+    </div>
+
+    <div class="variant reco">
+      <div class="variant-head"><span class="variant-tag">개선 A · 추천</span><span class="variant-name">체크박스 그룹 — 둘 다 켤 수 있음이 한눈에</span></div>
+      <div class="demo-row" id="dup-check"></div>
+      <div class="readout" id="dup-check-out"></div>
+    </div>
+
+    <div class="variant">
+      <div class="variant-head"><span class="variant-tag">개선 B</span><span class="variant-name">토글 스위치 2개</span></div>
+      <div class="demo-row" id="dup-switch"></div>
+      <div class="readout" id="dup-switch-out"></div>
+    </div>
+  </div>
+
+  <!-- 2. 정렬 -->
+  <div class="demo-group">
+    <h3>② 정렬</h3>
+    <p class="demo-sub">정렬 기준은 <b>택1</b>, 추가로 <b>오름/내림 방향</b>이 필요.</p>
+
+    <div class="variant asis">
+      <div class="variant-head"><span class="variant-tag">현재</span><span class="variant-name">버튼 3개 각각 순환(asc→desc→해제) — 여럿 활성처럼 보임</span></div>
+      <div class="demo-row" id="sort-asis"></div>
+      <div class="readout" id="sort-asis-out"></div>
+    </div>
+
+    <div class="variant reco">
+      <div class="variant-head"><span class="variant-tag">개선 A · 추천</span><span class="variant-name">세그먼트(기준 택1) + 선택 항목 재클릭 시 방향 토글</span></div>
+      <div class="demo-row" id="sort-seg"></div>
+      <div class="readout" id="sort-seg-out"></div>
+    </div>
+
+    <div class="variant">
+      <div class="variant-head"><span class="variant-tag">개선 B</span><span class="variant-name">Select 드롭다운(기준) + 방향 토글 버튼</span></div>
+      <div class="demo-row" id="sort-sel"></div>
+      <div class="readout" id="sort-sel-out"></div>
+    </div>
+  </div>
+
+  <!-- 3. 보기 -->
+  <div class="demo-group">
+    <h3>③ 보기</h3>
+    <p class="demo-sub">항상 <b>정확히 하나</b>만 선택되는 택1.</p>
+
+    <div class="variant asis">
+      <div class="variant-head"><span class="variant-tag">현재</span><span class="variant-name">토글 버튼 3개 — 다중선택 가능한 듯 오인</span></div>
+      <div class="demo-row" id="view-asis"></div>
+      <div class="readout" id="view-asis-out"></div>
+    </div>
+
+    <div class="variant reco">
+      <div class="variant-head"><span class="variant-tag">개선 A · 추천</span><span class="variant-name">세그먼트 컨트롤 — 하나만 선택됨이 명확</span></div>
+      <div class="demo-row" id="view-seg"></div>
+      <div class="readout" id="view-seg-out"></div>
+    </div>
+
+    <div class="variant">
+      <div class="variant-head"><span class="variant-tag">개선 B</span><span class="variant-name">라디오 그룹</span></div>
+      <div class="demo-row" id="view-radio"></div>
+      <div class="readout" id="view-radio-out"></div>
+    </div>
+
+    <div class="variant">
+      <div class="variant-head"><span class="variant-tag">개선 C</span><span class="variant-name">Select 드롭다운</span></div>
+      <div class="demo-row" id="view-sel"></div>
+      <div class="readout" id="view-sel-out"></div>
+    </div>
+  </div>
+
+  <p class="section-title" id="body-title" style="display:none">작업계획서 상세</p>
+  <article class="plan-body" id="plan-body" style="display:none"></article>
+
+  <div class="statusbar" id="statusbar"><span class="dot"></span><span id="statusbar-text"></span></div>
+
+  <div id="decisions-wrap">
+    <p class="section-title" id="decisions-title">결정 사항 — 선택 후 하단 [프롬프트로 복사]</p>
+    <div id="decisions"></div>
+
+    <div class="card" id="notes-card">
+      <h3 class="card-title">추가 메모 (선택)</h3>
+      <p class="card-desc">결정 외에 전달할 제약·우선순위·주의사항이 있으면 적어주세요.</p>
+      <textarea class="notes-area" id="notes" placeholder="예: 마이그레이션은 이번 배포에 포함하지 말 것"></textarea>
+    </div>
+
+    <details class="preview">
+      <summary>복사될 프롬프트 미리보기</summary>
+      <pre class="prompt-out" id="preview"></pre>
+    </details>
+  </div>
+</div>
+
+<div class="actionbar" id="actionbar">
+  <div class="actionbar-inner">
+    <div class="status" id="status"></div>
+    <button id="btn-json">JSON 복사</button>
+    <button class="primary" id="btn-copy">프롬프트로 복사</button>
+  </div>
+</div>
+<div class="toast" id="toast">복사되었습니다</div>
+
+<script>
+(function () {
+  const state = {}; // decisionId -> { picks: Set, custom: '' }
+
+  const el = (tag, cls, html) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (html != null) node.innerHTML = html;
+    return node;
+  };
+  const escapeText = (str) => String(str).replace(/[&<>"]/g, (ch) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+  // decided 값을 배열로 정규화
+  const decidedList = (dec) => {
+    if (dec.decided == null) return null;
+    return Array.isArray(dec.decided) ? dec.decided : [dec.decided];
+  };
+  const isConfirmed = (dec) => decidedList(dec) !== null;
+  // 모든 필수 결정에 decided 가 채워졌는가 → 확정 모드
+  const allConfirmed = () => PLAN.decisions.length > 0 &&
+    PLAN.decisions.every((dec) => !dec.required || isConfirmed(dec));
+
+  // --- 헤더 렌더 ---
+  document.getElementById('p-title').textContent = PLAN.title;
+  document.getElementById('p-summary').textContent = PLAN.summary || '';
+  const typeBadge = document.getElementById('p-type');
+  typeBadge.textContent = PLAN.type;
+  typeBadge.classList.add('type-' + PLAN.type);
+  document.getElementById('p-scope').textContent = '영향 범위: ' + PLAN.scope;
+
+  // --- 결정 카드 렌더 ---
+  const container = document.getElementById('decisions');
+  PLAN.decisions.forEach((dec) => {
+    const confirmed = isConfirmed(dec);
+    const preset = decidedList(dec) || [];
+    state[dec.id] = { picks: new Set(preset), custom: '' };
+
+    const card = el('div', 'card' + (confirmed ? ' confirmed' : ''));
+    card.dataset.id = dec.id;
+    const reqMark = dec.required ? ' *' : '';
+    card.appendChild(el('div', 'card-head',
+      '<h3 class="card-title">' + escapeText(dec.title) + reqMark + '</h3>' +
+      '<span class="pick-tag">' + (dec.type === 'multi' ? '복수 선택' : '택1') + '</span>'));
+    if (dec.desc) card.appendChild(el('p', 'card-desc', escapeText(dec.desc)));
+
+    const opts = el('div', 'options');
+    dec.options.forEach((opt) => {
+      const row = el('div', 'option');
+      row.dataset.type = dec.type;
+      if (preset.includes(opt.label)) row.classList.add('selected');
+      const rec = opt.recommended ? '<span class="rec">추천</span>' : '';
+      const desc = opt.desc ? '<div class="opt-desc">' + escapeText(opt.desc) + '</div>' : '';
+      const customField = opt.custom
+        ? '<input class="custom-input" placeholder="직접 입력" />' : '';
+      row.innerHTML =
+        '<div class="marker"></div>' +
+        '<div class="opt-body"><div class="opt-label">' + escapeText(opt.label) + rec + '</div>' +
+        desc + customField + '</div>';
+      if (!confirmed) {
+        row.addEventListener('click', (ev) => {
+          if (ev.target.classList.contains('custom-input')) return;
+          toggle(dec, opt, row, opts);
+        });
+        const customInput = row.querySelector('.custom-input');
+        if (customInput) customInput.addEventListener('input', () => {
+          state[dec.id].custom = customInput.value;
+          render();
+        });
+      }
+      opts.appendChild(row);
+    });
+    card.appendChild(opts);
+    container.appendChild(card);
+  });
+
+  function toggle(dec, opt, row, opts) {
+    const picks = state[dec.id].picks;
+    if (dec.type === 'single') {
+      picks.clear();
+      opts.querySelectorAll('.option').forEach((node) => node.classList.remove('selected'));
+      picks.add(opt.label);
+      row.classList.add('selected');
+    } else {
+      if (picks.has(opt.label)) { picks.delete(opt.label); row.classList.remove('selected'); }
+      else { picks.add(opt.label); row.classList.add('selected'); }
+    }
+    render();
+  }
+
+  // --- 선택 결과 → 텍스트 ---
+  function valueFor(dec) {
+    const st = state[dec.id];
+    const labels = [...st.picks].map((label) => {
+      const opt = dec.options.find((option) => option.label === label);
+      if (opt && opt.custom && st.custom.trim()) return st.custom.trim();
+      return label;
+    });
+    return labels.join(', ');
+  }
+
+  function unresolved() {
+    return PLAN.decisions.filter((dec) => dec.required && state[dec.id].picks.size === 0);
+  }
+
+  function buildPrompt() {
+    const lines = [];
+    lines.push('[작업계획서 결정사항 확정] ' + PLAN.title);
+    lines.push('');
+    lines.push('아래 결정사항으로 위 계획서를 확정하고 진행해주세요.');
+    lines.push('');
+    PLAN.decisions.forEach((dec, idx) => {
+      const val = valueFor(dec) || '(미결정)';
+      lines.push((idx + 1) + '. ' + dec.title + ': ' + val);
+    });
+    const notes = document.getElementById('notes').value.trim();
+    lines.push('');
+    lines.push('추가 메모: ' + (notes || '(없음)'));
+    return lines.join('\n');
+  }
+
+  function buildJson() {
+    const obj = { title: PLAN.title, decisions: {}, notes: document.getElementById('notes').value.trim() };
+    PLAN.decisions.forEach((dec) => { obj.decisions[dec.title] = valueFor(dec); });
+    return JSON.stringify(obj, null, 2);
+  }
+
+  function render() {
+    PLAN.decisions.forEach((dec) => {
+      const card = container.querySelector('[data-id="' + dec.id + '"]');
+      const tag = card.querySelector('.pick-tag');
+      const decided = state[dec.id].picks.size > 0;
+      card.classList.toggle('unresolved', dec.required && !decided && !isConfirmed(dec));
+      if (decided) {
+        tag.classList.add('done');
+        tag.textContent = (isConfirmed(dec) ? '✅ 확정 · ' : '✓ ') + valueFor(dec);
+      } else {
+        tag.classList.remove('done');
+        tag.textContent = dec.type === 'multi' ? '복수 선택' : '택1';
+      }
+    });
+    const left = unresolved();
+    const status = document.getElementById('status');
+    if (left.length === 0) status.innerHTML = '<b>모든 필수 결정 완료.</b> 복사해서 채팅에 붙여넣으세요.';
+    else status.innerHTML = '필수 결정 <b>' + left.length + '개</b> 남음: ' +
+      left.map((dec) => escapeText(dec.title)).join(', ');
+    document.getElementById('btn-copy').disabled = left.length > 0;
+    document.getElementById('preview').textContent = buildPrompt();
+  }
+
+  // --- 라이프사이클 UI: 결정 콘솔 / 확정 뷰 전환 ---
+  function applyLifecycle() {
+    const confirmed = allConfirmed();
+    const bar = document.getElementById('statusbar');
+    const barText = document.getElementById('statusbar-text');
+    if (confirmed) {
+      bar.className = 'statusbar confirmed';
+      barText.textContent = '✅ 확정 완료 — 위 작업계획서가 확정되었습니다. (아래 결정 카드는 잠금 표시)';
+      document.getElementById('decisions-title').textContent = '확정된 결정 사항';
+      // 확정되면 메모 입력/미리보기/액션바는 감춰 읽기용으로 전환
+      document.getElementById('notes-card').style.display = 'none';
+      document.querySelector('details.preview').style.display = 'none';
+      document.getElementById('actionbar').style.display = 'none';
+      document.querySelector('.wrap').style.paddingBottom = '60px';
+    } else {
+      bar.className = 'statusbar pending';
+      const left = PLAN.decisions.filter((dec) => dec.required && !isConfirmed(dec)).length;
+      barText.textContent = '결정 대기 — 필수 ' + left + '건을 선택해 [프롬프트로 복사] 후 채팅에 붙여넣어 주세요.';
+    }
+  }
+
+  // --- 계획서 본문 렌더 ---
+  renderPlanBody();
+  function renderPlanBody() {
+    const raw = (document.getElementById('plan-md').textContent || '').trim();
+    if (!raw) return;
+    document.getElementById('body-title').style.display = '';
+    const body = document.getElementById('plan-body');
+    body.style.display = '';
+    body.innerHTML = miniMarkdown(raw);
+  }
+
+  // 의존성 없는 경량 마크다운 렌더러 (중첩목록 미지원)
+  function mdEscape(str) {
+    return String(str).replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
+  }
+  function mdInline(str) {
+    let out = mdEscape(str);
+    out = out.replace(/`([^`]+)`/g, (m, code) => '<code>' + code + '</code>');
+    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>');
+    return out;
+  }
+  function mdSplitRow(line) {
+    return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+  }
+  function miniMarkdown(src) {
+    const lines = src.replace(/\r\n/g, '\n').split('\n');
+    let html = '';
+    let idx = 0;
+    const isSpecial = (line) =>
+      /^(#{1,6})\s/.test(line) || /^```/.test(line) || /^\s*\|.*\|\s*$/.test(line) ||
+      /^\s*([-*])\s+/.test(line) || /^\s*\d+\.\s+/.test(line) || /^\s*---+\s*$/.test(line) ||
+      /^\s*>/.test(line) || /^\s*$/.test(line);
+
+    while (idx < lines.length) {
+      const line = lines[idx];
+
+      // 코드 펜스
+      if (/^```/.test(line)) {
+        idx += 1;
+        const buf = [];
+        while (idx < lines.length && !/^```/.test(lines[idx])) { buf.push(lines[idx]); idx += 1; }
+        idx += 1;
+        html += '<pre class="md-code"><code>' + mdEscape(buf.join('\n')) + '</code></pre>';
+        continue;
+      }
+      // 표 (헤더 + 구분선)
+      if (/^\s*\|.*\|\s*$/.test(line) && idx + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[idx + 1])) {
+        const header = mdSplitRow(line);
+        idx += 2;
+        const rows = [];
+        while (idx < lines.length && /^\s*\|.*\|\s*$/.test(lines[idx])) { rows.push(mdSplitRow(lines[idx])); idx += 1; }
+        html += '<table><thead><tr>' + header.map((cell) => '<th>' + mdInline(cell) + '</th>').join('') + '</tr></thead><tbody>';
+        html += rows.map((row) => '<tr>' + row.map((cell) => '<td>' + mdInline(cell) + '</td>').join('') + '</tr>').join('');
+        html += '</tbody></table>';
+        continue;
+      }
+      // 제목
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        const level = heading[1].length;
+        html += '<h' + level + '>' + mdInline(heading[2]) + '</h' + level + '>';
+        idx += 1;
+        continue;
+      }
+      // 구분선
+      if (/^\s*---+\s*$/.test(line)) { html += '<hr>'; idx += 1; continue; }
+      // 인용
+      if (/^\s*>\s?/.test(line)) {
+        const buf = [];
+        while (idx < lines.length && /^\s*>\s?/.test(lines[idx])) { buf.push(lines[idx].replace(/^\s*>\s?/, '')); idx += 1; }
+        html += '<blockquote>' + mdInline(buf.join(' ')) + '</blockquote>';
+        continue;
+      }
+      // 목록
+      if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
+        const ordered = /^\s*\d+\.\s+/.test(line);
+        const buf = [];
+        while (idx < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[idx])) {
+          buf.push(lines[idx].replace(/^\s*([-*]|\d+\.)\s+/, '')); idx += 1;
+        }
+        const items = buf.map((item) => '<li>' + mdInline(item) + '</li>').join('');
+        html += ordered ? '<ol>' + items + '</ol>' : '<ul>' + items + '</ul>';
+        continue;
+      }
+      // 빈 줄
+      if (/^\s*$/.test(line)) { idx += 1; continue; }
+      // 문단
+      const buf = [line];
+      idx += 1;
+      while (idx < lines.length && !isSpecial(lines[idx])) { buf.push(lines[idx]); idx += 1; }
+      html += '<p>' + mdInline(buf.join(' ')) + '</p>';
+    }
+    return html;
+  }
+
+  function copy(text) {
+    navigator.clipboard.writeText(text).then(showToast).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); ta.remove(); showToast();
+    });
+  }
+  let toastTimer;
+  function showToast() {
+    const toast = document.getElementById('toast');
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1600);
+  }
+
+  document.getElementById('btn-copy').addEventListener('click', () => copy(buildPrompt()));
+  document.getElementById('btn-json').addEventListener('click', () => copy(buildJson()));
+
+  document.getElementById('notes').addEventListener('input', render);
+
+  render();
+  applyLifecycle();
+})();
+</script>
+
+<script>
+/* ===== 인터랙티브 데모 로직 (결정 콘솔과 독립) ===== */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12"/></svg>';
+  const LABELS = { name: '이름', birthday: '생년월일', businessName: '사업장명' };
+  const VIEW = { all: '전체', employee: '근로자', business: '사업장' };
+
+  // ---------- ① 중복 확인 ----------
+  // 현재: 토글 버튼
+  (function () {
+    const st = { isDeprecatedName: false, isDeprecatedBirthday: false };
+    const out = $('dup-asis-out');
+    const defs = [['isDeprecatedName', '이름 중복'], ['isDeprecatedBirthday', '생일 중복']];
+    const btns = defs.map(([key, label]) => {
+      const btn = document.createElement('button');
+      btn.className = 'd-btn';
+      btn.textContent = label;
+      btn.onclick = () => { st[key] = !st[key]; paint(); };
+      $('dup-asis').appendChild(btn);
+      return [btn, key];
+    });
+    function paint() {
+      btns.forEach(([btn, key]) => btn.classList.toggle('on', st[key]));
+      out.innerHTML = '상태 → 이름중복=<b>' + st.isDeprecatedName + '</b>, 생일중복=<b>' + st.isDeprecatedBirthday + '</b>';
+    }
+    paint();
+  })();
+
+  // 개선 A: 체크박스
+  (function () {
+    const st = { name: false, birthday: false };
+    const out = $('dup-check-out');
+    const defs = [['name', '이름 중복'], ['birthday', '생일 중복']];
+    const rows = defs.map(([key, label]) => {
+      const row = document.createElement('label');
+      row.className = 'd-check';
+      row.innerHTML = '<span class="box">' + CHECK_SVG + '</span>' + label;
+      row.onclick = () => { st[key] = !st[key]; paint(); };
+      $('dup-check').appendChild(row);
+      return [row, key];
+    });
+    function paint() {
+      rows.forEach(([row, key]) => row.classList.toggle('on', st[key]));
+      out.innerHTML = '체크 → 이름=<b>' + st.name + '</b>, 생일=<b>' + st.birthday + '</b> · 두 조건 독립 토글';
+    }
+    paint();
+  })();
+
+  // 개선 B: 스위치
+  (function () {
+    const st = { name: false, birthday: false };
+    const out = $('dup-switch-out');
+    const defs = [['name', '이름 중복'], ['birthday', '생일 중복']];
+    const rows = defs.map(([key, label]) => {
+      const row = document.createElement('label');
+      row.className = 'd-switch';
+      row.innerHTML = '<span class="track"></span>' + label;
+      row.onclick = () => { st[key] = !st[key]; paint(); };
+      $('dup-switch').appendChild(row);
+      return [row, key];
+    });
+    function paint() {
+      rows.forEach(([row, key]) => row.classList.toggle('on', st[key]));
+      out.innerHTML = '스위치 → 이름=<b>' + st.name + '</b>, 생일=<b>' + st.birthday + '</b>';
+    }
+    paint();
+  })();
+
+  // ---------- ② 정렬 ----------
+  const SORT_KEYS = ['name', 'birthday', 'businessName'];
+  const arrow = (dir) => dir === 'asc' ? '▲' : dir === 'desc' ? '▼' : '';
+  const sortText = (out, type, dir) => {
+    if (!type) { out.innerHTML = '정렬 → <b>없음</b>'; return; }
+    out.innerHTML = '정렬 → 기준=<b>' + LABELS[type] + '</b>, 방향=<b>' + (dir === 'asc' ? '오름차순' : '내림차순') + '</b>';
+  };
+
+  // 현재: 버튼 순환
+  (function () {
+    const st = { type: '', dir: '' };
+    const out = $('sort-asis-out');
+    const btns = SORT_KEYS.map((key) => {
+      const btn = document.createElement('button');
+      btn.className = 'd-btn';
+      btn.onclick = () => {
+        // 각 버튼 독립 순환 (현재 동작 재현: 클릭한 버튼만 asc→desc→해제)
+        if (st.type !== key) { st.type = key; st.dir = 'asc'; }
+        else if (st.dir === 'asc') st.dir = 'desc';
+        else { st.type = ''; st.dir = ''; }
+        paint();
+      };
+      $('sort-asis').appendChild(btn);
+      return [btn, key];
+    });
+    function paint() {
+      btns.forEach(([btn, key]) => {
+        const active = st.type === key;
+        btn.className = 'd-btn' + (active ? (st.dir === 'desc' ? ' on-red' : ' on') : '');
+        btn.innerHTML = LABELS[key] + (active ? ' <span class="seg-arrow">' + arrow(st.dir) + '</span>' : '');
+      });
+      sortText(out, st.type, st.dir);
+    }
+    paint();
+  })();
+
+  // 개선 A: 세그먼트 + 방향 토글
+  (function () {
+    const st = { type: '', dir: '' };
+    const out = $('sort-seg-out');
+    const seg = document.createElement('div');
+    seg.className = 'd-seg';
+    const btns = SORT_KEYS.map((key) => {
+      const btn = document.createElement('button');
+      btn.className = 'seg';
+      btn.onclick = () => {
+        if (st.type !== key) { st.type = key; st.dir = 'asc'; }
+        else st.dir = st.dir === 'asc' ? 'desc' : 'asc'; // 선택된 기준 재클릭 → 방향만 토글
+        paint();
+      };
+      seg.appendChild(btn);
+      return [btn, key];
+    });
+    $('sort-seg').appendChild(seg);
+    function paint() {
+      btns.forEach(([btn, key]) => {
+        const active = st.type === key;
+        btn.className = 'seg' + (active ? ' on' : '');
+        btn.innerHTML = LABELS[key] + (active ? ' <span class="seg-arrow">' + arrow(st.dir) + '</span>' : '');
+      });
+      sortText(out, st.type, st.dir);
+    }
+    paint();
+  })();
+
+  // 개선 B: Select + 방향 토글 버튼
+  (function () {
+    const st = { type: '', dir: 'asc' };
+    const out = $('sort-sel-out');
+    const sel = document.createElement('select');
+    sel.className = 'd-select';
+    sel.innerHTML = '<option value="">정렬 기준</option>' +
+      SORT_KEYS.map((key) => '<option value="' + key + '">' + LABELS[key] + '</option>').join('');
+    sel.onchange = () => { st.type = sel.value; paint(); };
+    const dirBtn = document.createElement('button');
+    dirBtn.className = 'd-btn';
+    dirBtn.onclick = () => { if (!st.type) return; st.dir = st.dir === 'asc' ? 'desc' : 'asc'; paint(); };
+    $('sort-sel').appendChild(sel);
+    $('sort-sel').appendChild(dirBtn);
+    function paint() {
+      dirBtn.innerHTML = (st.dir === 'asc' ? '오름차순 ▲' : '내림차순 ▼');
+      dirBtn.disabled = !st.type;
+      dirBtn.style.opacity = st.type ? '1' : '.45';
+      sortText(out, st.type, st.dir);
+    }
+    paint();
+  })();
+
+  // ---------- ③ 보기 ----------
+  const VIEW_KEYS = ['all', 'employee', 'business'];
+
+  // 현재: 버튼(택1 동작이나 다중처럼 보임)
+  (function () {
+    let cur = 'all';
+    const out = $('view-asis-out');
+    const btns = VIEW_KEYS.map((key) => {
+      const btn = document.createElement('button');
+      btn.className = 'd-btn';
+      btn.textContent = VIEW[key];
+      btn.onclick = () => { cur = (cur === key ? '' : key); paint(); };
+      $('view-asis').appendChild(btn);
+      return [btn, key];
+    });
+    function paint() {
+      btns.forEach(([btn, key]) => btn.classList.toggle('on', cur === key));
+      out.innerHTML = '보기 → <b>' + (VIEW[cur] || '없음') + '</b> · 해제도 가능해 "0개 선택"이 생김';
+    }
+    paint();
+  })();
+
+  // 개선 A: 세그먼트
+  (function () {
+    let cur = 'all';
+    const out = $('view-seg-out');
+    const seg = document.createElement('div');
+    seg.className = 'd-seg';
+    const btns = VIEW_KEYS.map((key) => {
+      const btn = document.createElement('button');
+      btn.className = 'seg';
+      btn.textContent = VIEW[key];
+      btn.onclick = () => { cur = key; paint(); };
+      seg.appendChild(btn);
+      return [btn, key];
+    });
+    $('view-seg').appendChild(seg);
+    function paint() {
+      btns.forEach(([btn, key]) => btn.classList.toggle('on', cur === key));
+      out.innerHTML = '보기 → <b>' + VIEW[cur] + '</b> · 항상 하나만 활성';
+    }
+    paint();
+  })();
+
+  // 개선 B: 라디오
+  (function () {
+    let cur = 'all';
+    const out = $('view-radio-out');
+    const btns = VIEW_KEYS.map((key) => {
+      const row = document.createElement('label');
+      row.className = 'd-radio';
+      row.innerHTML = '<span class="dot"></span>' + VIEW[key];
+      row.onclick = () => { cur = key; paint(); };
+      $('view-radio').appendChild(row);
+      return [row, key];
+    });
+    function paint() {
+      btns.forEach(([row, key]) => row.classList.toggle('on', cur === key));
+      out.innerHTML = '보기 → <b>' + VIEW[cur] + '</b>';
+    }
+    paint();
+  })();
+
+  // 개선 C: Select
+  (function () {
+    const out = $('view-sel-out');
+    const sel = document.createElement('select');
+    sel.className = 'd-select';
+    sel.innerHTML = VIEW_KEYS.map((key) => '<option value="' + key + '">' + VIEW[key] + '</option>').join('');
+    sel.onchange = () => paint();
+    $('view-sel').appendChild(sel);
+    function paint() { out.innerHTML = '보기 → <b>' + VIEW[sel.value] + '</b>'; }
+    paint();
+  })();
+})();
+</script>
+</body>
+</html>

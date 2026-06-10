@@ -1,0 +1,894 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>작업계획서</title>
+<!--
+  ============================================================================
+  BRICS 작업계획서 — 결정 콘솔 + 계획서 뷰 (HTML 단일 파일)
+  ----------------------------------------------------------------------------
+  이 .html 파일 하나가 작업계획서의 단일 소스이자 라이프사이클 전체를 담는다.
+  (별도 .md 파일은 만들지 않는다 — 계획서 본문은 아래 [B] 블록에 직접 작성한다.)
+    (1) 승인 전 → 상단에 계획서 본문이 렌더링되고, 그 아래 "결정 콘솔"에서
+                  선택지를 고르고 [프롬프트로 복사]
+    (2) 확정 후 → 각 결정에 decided 값을 채우면 하단 결정 콘솔이 "✅ 확정" 으로
+                  잠기고, 위쪽 본문이 "읽기용 계획서"로 유지된다.
+
+  사용법 (Team Lead):
+  1) 이 파일을 plans/<유형>/YYYYMMDD-제목.html 로 복사한다.
+  2) 아래 두 블록만 채운다 — 스타일/스크립트(맨 아래)는 건드릴 필요 없다.
+
+     [A] <script id="plan-data"> 의 PLAN 객체
+         - title/type/scope/summary
+         - decisions[] : 본문 "사용자 결정 사항"과 1:1
+           · 승인 전: options[] 만 채운다 (decided 생략)
+           · 확정 후: 각 결정에 decided 를 채운다
+                      (택1이면 문자열, 복수면 배열) → 해당 결정이 "✅ 확정"으로 잠김
+
+     [B] <script id="plan-md" type="text/markdown"> 안에 계획서 본문을 마크다운으로 작성
+         - 이 텍스트가 결정 콘솔 위에 렌더링되어 "보기 좋은 계획서"가 된다.
+         - 이 블록이 계획서 본문의 단일 소스다 (API spec / 화면 설계 / 작업 배분 등).
+
+  지원 마크다운: 제목(#~######), 굵게(**), 인라인코드(`), 코드펜스(```),
+                 표(GFM), 목록(- * 1.), 인용(>), 구분선(---), 링크. (중첩목록 제외)
+  ============================================================================
+-->
+<script id="plan-data">
+const PLAN = {
+  title: '분류 > 근로자 내역 URL 필터 구조 전면 정규화',
+  type: 'feature',
+  scope: '프론트',
+  status: 'planning', // planning | in-progress | done
+  summary: '근로자 내역 화면의 13개 필터/정렬/보기를 제어하는 URL 파라미터를 정규화한다. URL 제어는 유지(공유·북마크 이점)하되, JSON 통째 인코딩(localSortConfigs)을 개별 파라미터로 평탄화하고 모든 파라미터에 clearOnDefault를 적용해 "사용자가 실제로 바꾼 필터만" URL에 남도록 한다. 정렬·보기는 클라이언트 처리이므로 API 변경 없음.',
+
+  decisions: [
+    {
+      id: 'overall-direction',
+      title: '전체 방향 — URL 상태를 유지할지',
+      desc: '필터/정렬/보기 상태를 URL에 둘지, 컴포넌트 state로 뺄지. (현황: 두 방식의 본질적 차이는 "공유·북마크·새로고침 복원" 가능 여부)',
+      type: 'single',
+      required: true,
+      options: [
+        { label: 'URL 유지 + 인코딩 정규화', desc: 'nuqs URL 상태를 유지하되 인코딩만 깔끔하게. 필터 건 화면을 공유·북마크·새로고침해도 복원됨(운영 콘솔의 실질 이점). 못생김의 실제 원인(JSON 통째 + year 미정규화)만 제거. 프론트 단독, 동작 변화 없음.', recommended: true },
+        { label: 'URL에서 제거 (useState로 이동)', desc: 'URL은 /deal/:id/classification 으로 최소화. 단 새로고침 시 필터/정렬 풀리고 공유 시 상태 안 따라감(UX 변화). 더 큰 리팩터.' },
+      ],
+    },
+    {
+      id: 'sort-flatten',
+      title: '정렬/보기(localSortConfigs) 평탄화 방식',
+      desc: 'JSON 통째로 박힌 localSortConfigs를 어떻게 분리할지. (정렬·보기는 클라이언트 처리 유지)',
+      type: 'single',
+      required: true,
+      options: [
+        { label: 'enum 파서 + clearOnDefault', desc: 'parseAsStringEnum으로 허용값(asc|desc 등)만 받아 잘못된 URL은 기본값으로 안전 복원 + 기본값일 땐 URL에서 제거. 정렬 시에만 ?sortType=birthday&sort=asc 노출. 가독성·견고성 최상.', recommended: true },
+        { label: '단순 평탄화 (parseAsString 3개)', desc: '분리만. 값 검증 없고 리셋 후 빈 키가 남을 수 있음.' },
+      ],
+    },
+    {
+      id: 'server-filter-cleanup',
+      title: '서버 필터 11종 + year 정규화 적용 여부',
+      desc: 'year가 전체 선택인데도 길게 남는 문제 등 서버 필터에도 clearOnDefault를 일관 적용할지.',
+      type: 'single',
+      required: true,
+      options: [
+        { label: '전체 적용 (clearOnDefault + year 오름차순 정규화)', desc: '모든 필터를 기본값이면 URL에서 제거 + year 배열을 항상 오름차순 정규화해 "전체 선택=기본값" 판정이 깨지지 않게 함. 사용자가 바꾼 필터만 URL에 남음.', recommended: true },
+        { label: '정렬/보기만 (서버 필터 제외)', desc: 'localSortConfigs 평탄화에만 집중하고 서버 필터 URL은 그대로 둠.' },
+      ],
+    },
+    {
+      id: 'param-name',
+      title: '정렬/보기 파라미터 이름',
+      desc: '평탄화 시 쿼리 키 이름. 기존 서버 필터와 충돌 없음.',
+      type: 'single',
+      required: false,
+      options: [
+        { label: 'sort / sortType / viewType', desc: '기존 객체 내부 키를 그대로 최상위로 승격. 직관적.', recommended: true },
+        { label: 'sortOrder / sortBy / view', desc: '의미를 더 명확히 한 이름으로 정리.' },
+      ],
+    },
+    {
+      id: 'unused-cleanup',
+      title: '미사용 sortConfigs 데드코드 제거',
+      desc: 'sortConfigs(배열, JSON)와 handleSort는 정의돼 있으나 화면에서 미사용. 함께 제거할지.',
+      type: 'single',
+      required: false,
+      options: [
+        { label: '함께 제거', desc: 'sortConfigs / handleSort 제거로 훅 단순화.', recommended: true },
+        { label: '유지', desc: '이번 범위에서 제외.' },
+      ],
+    },
+    {
+      id: 'backward-compat',
+      title: '기존 URL 하위호환',
+      desc: '북마크/공유된 기존 localSortConfigs={...} URL 처리. (사내 운영 콘솔)',
+      type: 'single',
+      required: false,
+      options: [
+        { label: '무시 (단순)', desc: '기존 URL은 기본값으로 떨어짐. 사내 콘솔이라 영향 미미.', recommended: true },
+        { label: '1회성 마이그레이션', desc: '진입 시 localSortConfigs가 있으면 개별 파라미터로 변환 후 제거.' },
+      ],
+    },
+  ],
+}
+</script>
+
+<!-- [B] 계획서 본문을 마크다운으로 작성한다. 비워두면 본문 렌더링 영역이 숨겨진다. -->
+<script id="plan-md" type="text/markdown">
+# 분류 > 근로자 내역 URL 필터 구조 전면 정규화
+
+## 1. 배경 & 문제 제기
+
+근로자 내역 화면의 모든 필터·정렬·보기 상태가 URL 쿼리 파라미터로 제어된다. 실제 URL 예:
+
+```
+?isDeprecatedBirthday=true&isDeprecatedName=true
+ &year=2015,2017,2018,2019,2020,2021,2022,2023,2024,2025,2026,2016
+ &employmentContracts=yes&isMinimumWage=yes&isRegularEmployee=yes
+ &localSortConfigs={"sort":"asc","sortType":"businessName","viewType":"employee"}
+```
+
+"모든 필터가 URL에 박혀 가독성이 떨어진다"는 것이 출발점이었고, 검토 과정에서 **"꼭 URL로 정렬/필터를 제어해야 하나, API 재조회나 다른 방식이 낫지 않나"** 까지 함께 검토했다.
+
+## 2. 현황 전수 분석 (코드 확인 결과)
+
+라우트: `apps/works/app/deal/[id]/classification/page.tsx`
+URL 상태 훅: `apps/works/app/deal/[id]/hooks/useDealInfoUrlParams.ts` (`nuqs` 사용)
+
+URL이 제어하는 항목은 **총 13개**다.
+
+| 그룹 | UI | 파라미터 | 기본값 | 처리 | 적용 시점 |
+|------|----|----------|--------|------|-----------|
+| 검색 폼 | 사업자명 | `businessName` | `all` | 서버 | 검색 버튼 |
+| | 1년 미만 근로 | `isEmploymentLessThanOneYear` | `all` | 서버 | 검색 버튼 |
+| | 근로계약서 | `employmentContracts` | `all` | 서버 | 검색 버튼 |
+| | 특수관계인 | `specialRelationshipsCurrently` | `all` | 서버 | 검색 버튼 |
+| | 승계 | `takingOverEmployees` | `all` | 서버 | 검색 버튼 |
+| | 단시간(0.5) | `isRegularEmployee` | `all` | 서버 | 검색 버튼 |
+| | 초단시간 | `isMinimumWage` | `all` | 서버 | 검색 버튼 |
+| | 근무 연도(다중) | `year` | 2015~올해 전체 | 서버 | 검색 버튼 |
+| | 검색어 | `keyword` | `''` | 서버 | 검색 버튼 |
+| 즉시 필터 | 근로자 중복(이름) | `isDeprecatedName` | `no` | 서버 | 클릭 즉시 |
+| | 근로자 중복(생일) | `isDeprecatedBirthday` | `no` | 서버 | 클릭 즉시 |
+| 정렬 | 정렬 | `localSortConfigs`.sort/sortType | `''` | **클라** | 클릭 즉시 |
+| 보기 | 보기 | `localSortConfigs`.viewType | `''` | **클라** | 클릭 즉시 |
+
+(+ 미사용 `sortConfigs` 배열 — 데드코드)
+
+- 서버 필터(`queryParams`)는 `useDealControllerGetWorkerDetailsOfBusiness`로 API 재조회를 트리거. 검색 폼은 "검색" 버튼(`setQueryParams`)으로, 중복확인 2종은 클릭 즉시 반영.
+- 정렬·보기(`localSortConfigs`)는 API를 안 타고 `TotalTableForm.tsx`에서 **이미 로드된 데이터를 클라이언트 메모리에서 재정렬**(sort/sortType)하거나 **아코디언 펼침/접힘**(viewType)만 제어.
+
+## 3. 핵심 발견 — 못생김의 진짜 원인은 2개뿐
+
+실제 URL을 분석하면 거기 나온 파라미터는 **전부 기본값이 아닌, 사용자가 실제로 바꾼 필터**다. `businessName`·`특수관계인`·`승계`·`1년미만`·`keyword`는 기본값이라 **URL에 아예 안 나온다.** → nuqs의 기본값 생략이 스칼라 필터에는 **이미 작동 중**이다.
+
+따라서 "모든 필터가 다 박힌다"기보다, 지저분함의 실제 원인은 둘로 좁혀진다.
+
+1. **`localSortConfigs`가 JSON 통째** — `{%22sort%22:%22asc%22...}` 로 인코딩되어 유독 못생김
+2. **`year`가 전체 선택인데도 다 나옴** — 연도 토글 시 순서가 `...2026,2016`으로 흐트러져 "기본값(오름차순)과 같다"는 판정이 깨져 안 지워짐
+
+## 4. 방향 결정 — "API 재조회/URL 제거"가 아니라 "인코딩 정규화"
+
+검토한 세 갈래와 판단:
+
+| 방향 | 평가 |
+|------|------|
+| **A. URL 유지 + 인코딩 정규화** | ✅ 채택. nuqs는 정확히 이 용도(필터↔URL 동기화)의 라이브러리다. 운영 콘솔에서 **필터 건 화면을 공유·북마크·새로고침 복원**하는 건 실질 이점. 못생김의 실제 원인(2·3장)만 제거하면 목적 달성. 프론트 단독, 동작 변화 없음. |
+| B. URL 제거 → useState | URL은 최소화되지만 **공유/북마크/새로고침 복원을 잃는** UX 손실 + 더 큰 리팩터. 가독성만을 위해 기능을 버리는 트레이드오프. |
+| C. API 재조회로 정렬 이관 | 데이터가 **사업장→근로자 트리 구조**라 계층별 정렬이라 서버 구현이 복잡하고, 페이지네이션이 없어 정렬마다 네트워크 왕복만 추가. `viewType`은 아코디언 UI라 API 대상도 아님. **URL 가독성과 무관** — API가 정렬해도 활성 정렬 상태는 어딘가 저장해야 함. |
+
+> 결론: 정렬 위치(클라/서버)와 URL 가독성은 별개 축이다. 못생김의 원인은 "정렬을 URL로 한다"가 아니라 **"상태를 JSON으로 박았고 year를 정규화 안 했다"** 이므로, **인코딩만 정규화**하는 게 최소 비용·최대 효과다.
+
+### 정규화 후 기대 URL
+
+```
+?isDeprecatedName=true&isDeprecatedBirthday=true&employmentContracts=yes
+ &isMinimumWage=yes&isRegularEmployee=yes&sortType=businessName&sort=asc&viewType=employee
+```
+(year는 전체 선택이라 사라지고, JSON 블록은 평탄해짐. 사용자가 바꾼 필터만 읽기 쉽게 남음)
+
+## 5. 변경 설계
+
+영향 파일은 모두 프론트(`apps/works/app/deal/[id]/`). **API/DB 변경 없음.**
+
+### 5-1. 정렬/보기 평탄화 — `useDealInfoUrlParams.ts`
+
+`parseAsJson(localSortConfigs)`를 개별 enum 파서 3개로 분리. enum으로 허용값만 받고, `clearOnDefault`로 기본값이면 URL에서 제거.
+
+```ts
+import { parseAsStringEnum } from 'nuqs'
+
+// before
+const [localQueryParams, setLocalQueryParams] = useQueryStates({
+  sortConfigs: parseAsJson(sortSchema.parse).withDefault([]),
+  localSortConfigs: parseAsJson(localSortSchema.parse).withDefault({ sort: '', sortType: '', viewType: '' }),
+})
+
+// after
+const [localQueryParams, setLocalQueryParams] = useQueryStates({
+  sort:     parseAsStringEnum(['asc', 'desc']).withDefault('').withOptions({ clearOnDefault: true }),
+  sortType: parseAsStringEnum(['name', 'birthday', 'businessName']).withDefault('').withOptions({ clearOnDefault: true }),
+  viewType: parseAsStringEnum(['all', 'employee', 'business']).withDefault('').withOptions({ clearOnDefault: true }),
+})
+```
+
+- `setLocalSortConfigs(params)`: 중첩 객체 갱신 → 최상위 키 갱신으로 변경
+- `handleLocalSortReset()`: `sort/sortType/viewType`를 기본값으로 초기화
+- 미사용 `sortConfigs`/`handleSort` 및 `handleFilterReset`의 관련 참조 제거 (결정 시)
+
+### 5-2. 정렬/보기 참조 컴포넌트 일괄 치환
+
+`localQueryParams.localSortConfigs.sort` → `localQueryParams.sort` 형태로 평탄화. 대상:
+
+- `classification/_components/EmploymentLocalFilter.tsx` — 정렬/보기 버튼(읽기·쓰기)
+- `classification/_components/TotalTableForm.tsx` — 정렬 `useEffect`, viewType 아코디언 `useEffect`
+- 그 외 `localSortConfigs` 참조 전 위치 (Front-engineer가 grep 전수 확인)
+
+> 동작 계약 유지: 값 집합(asc|desc / name|birthday|businessName / all|employee|business)과 정렬·아코디언 로직은 그대로. URL 표기만 변경.
+
+### 5-3. 서버 필터 11종 + year 정규화
+
+`queryParams` 블록 전 파라미터에 `clearOnDefault` 적용. **year는 배열 순서 함정**에 주의 — URL에 쓸 때 항상 오름차순 정규화해야 "전체 선택=기본값" 판정이 안정적으로 동작한다.
+
+```ts
+year: parseAsArrayOf(parseAsString, ',')
+  .withDefault(workYearItems.map((item) => item.value))
+  .withOptions({ clearOnDefault: true }),
+businessName: parseAsString.withDefault('all').withOptions({ clearOnDefault: true }),
+// ...나머지 필터 동일하게 clearOnDefault 적용
+// + setQueryParams 호출부에서 year는 [...years].sort((a, b) => Number(a) - Number(b)) 로 정규화 후 저장
+```
+
+> 기본값을 URL에서 빼도 훅이 API에는 기본값을 그대로 채워 보내므로 **조회 결과는 동일**하다.
+
+## 6. 작업 배분
+
+| 담당 | 작업 | 의존성 |
+|------|------|--------|
+| **Front-engineer** | ①정렬/보기 평탄화(enum+clearOnDefault) ②localSortConfigs 참조 전수 치환 ③서버 필터 clearOnDefault + year 오름차순 정규화 ④미사용 sortConfigs 제거 | 없음 — 단독 |
+| **QA-engineer** | 정렬(이름/생년월일/사업장)·보기(전체/직원/사업장)·검색·중복확인·리셋이 동일 동작하는지, 새로고침/공유 시 상태 복원, year 전체선택 시 URL에서 사라지는지 확인 | 프론트 완료 후 |
+| **Reviewer** | nuqs 사용 정합성, year 정규화 정확성, 데드코드 제거 범위, API 요청 파라미터 불변(조회 결과 회귀 없음) 검증 | 프론트 완료 후 |
+
+> API-engineer 디스패치 없음 — 정렬·보기는 클라 처리, 서버 필터도 인코딩만 정규화하므로 API/DB 변경이 전혀 없는 프론트 단독 작업.
+
+## 7. 리스크 & 검증 포인트
+
+- `localSortConfigs` 참조 위치 누락 시 런타임 에러 → grep 전수 확인 필수
+- **year 정규화 누락 시 회귀**: 전체 선택인데도 URL이 안 지워짐. 전체선택/일부해제/리셋 후 URL을 QA에서 확인
+- 기본값을 URL에서 빼도 **API 요청 파라미터는 동일**해야 함 → 조회 결과 회귀 없는지 확인
+- 정렬/아코디언/필터 동작은 **눈에 보이는 변화가 없어야 함** (URL 표기만 변경)
+- 기존 북마크 URL의 `localSortConfigs={...}`는 (하위호환 결정에 따라) 무시되어 기본값으로 시작
+</script>
+
+<style>
+  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
+
+  :root {
+    --bg: #f6f7fb;
+    --bg-grad-1: #eef1fb;
+    --bg-grad-2: #f6f7fb;
+    --surface: #ffffff;
+    --surface-soft: #fbfbfd;
+    --border: #e8eaf0;
+    --border-strong: #d6d9e3;
+    --text: #15171c;
+    --text-soft: #383b44;
+    --muted: #71757f;
+    --muted-soft: #9aa0ab;
+    --primary: #4f46e5;
+    --primary-strong: #4338ca;
+    --primary-grad: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    --primary-weak: #eef1ff;
+    --primary-border: #d4d9ff;
+    --good: #0f9d58;
+    --good-strong: #0b8049;
+    --good-weak: #e9f9f0;
+    --good-border: #b6eccd;
+    --warn: #d97706;
+    --warn-weak: #fff7e8;
+    --warn-border: #f6d588;
+    --danger: #e5484d;
+    --danger-weak: #ffeef0;
+    --danger-border: #f7c4c7;
+    --code-bg: #f1f3f9;
+    --code-fg: #d6336c;
+    --ink: #16181d;
+    --ink-fg: #e6e8ef;
+    --radius-lg: 18px;
+    --radius: 14px;
+    --radius-sm: 11px;
+    --shadow-sm: 0 1px 2px rgba(20, 23, 33, .04), 0 1px 3px rgba(20, 23, 33, .06);
+    --shadow: 0 2px 4px rgba(20, 23, 33, .04), 0 6px 16px -4px rgba(20, 23, 33, .08);
+    --shadow-lg: 0 8px 24px -6px rgba(20, 23, 33, .12), 0 2px 6px rgba(20, 23, 33, .05);
+    --ring: 0 0 0 4px rgba(79, 70, 229, .14);
+    --mono: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+      'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, var(--bg-grad-1), var(--bg-grad-2));
+    background-attachment: fixed;
+    color: var(--text);
+    line-height: 1.6;
+    letter-spacing: -.005em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 44px 20px 220px; }
+
+  header.plan-head {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 30px 30px 26px;
+    box-shadow: var(--shadow);
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+  header.plan-head::before {
+    content: ''; position: absolute; inset: 0 0 auto 0; height: 4px;
+    background: var(--primary-grad);
+  }
+  .plan-head h1 { margin: 4px 0 8px; font-size: 26px; font-weight: 800; letter-spacing: -.025em; line-height: 1.25; }
+  .plan-summary { color: var(--muted); margin: 8px 0 18px; font-size: 15px; line-height: 1.6; }
+  .badges { display: flex; gap: 7px; flex-wrap: wrap; }
+  .badge {
+    font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px;
+    letter-spacing: .01em;
+    background: var(--primary-weak); color: var(--primary); border: 1px solid var(--primary-border);
+  }
+  .badge.type-feature { background:#eef1ff; color:#4f46e5; border-color:#d4d9ff; }
+  .badge.type-bugfix  { background:var(--danger-weak); color:#d3373c; border-color:var(--danger-border); }
+  .badge.type-refactor{ background:#f4f0ff; color:#7c3aed; border-color:#e2d8ff; }
+  .badge.scope { background:var(--surface-soft); color:var(--muted); border-color:var(--border-strong); }
+
+  /* 상태 배너 */
+  .statusbar {
+    display:flex; align-items:center; gap:11px;
+    border-radius: var(--radius); padding: 13px 18px; margin: 26px 0;
+    font-size: 14px; font-weight: 600; border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+  }
+  .statusbar.pending { background:var(--warn-weak); border-color:var(--warn-border); color:#9a5b08; }
+  .statusbar.confirmed { background:var(--good-weak); border-color:var(--good-border); color:var(--good-strong); }
+  .statusbar .dot { width:9px; height:9px; border-radius:50%; flex:none; }
+  .statusbar.pending .dot { background:var(--warn); box-shadow: 0 0 0 4px rgba(217,119,6,.14); }
+  .statusbar.confirmed .dot { background:var(--good); box-shadow: 0 0 0 4px rgba(15,157,88,.14); }
+
+  .section-title { font-size: 12px; font-weight: 700; color: var(--muted-soft);
+    text-transform: uppercase; letter-spacing: .08em; margin: 0 0 12px 3px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow .18s, border-color .18s, transform .18s;
+  }
+  .card.unresolved { border-color: var(--warn-border); box-shadow: 0 0 0 3px rgba(217,119,6,.07); }
+  .card.confirmed { border-color: var(--good-border); background: linear-gradient(0deg, var(--good-weak), var(--surface) 60%); }
+  .card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .card-title { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+  .card-desc { color: var(--muted); font-size: 13.5px; margin: 5px 0 17px; line-height: 1.55; }
+  .pick-tag { font-size:11px; font-weight:700; color:var(--muted); white-space:nowrap;
+    border:1px solid var(--border-strong); border-radius:999px; padding:3px 10px; }
+  .pick-tag.done { color:var(--good-strong); border-color:var(--good-border); background:var(--good-weak); }
+
+  .options { display: flex; flex-direction: column; gap: 9px; }
+  .option {
+    display: flex; align-items: flex-start; gap: 13px;
+    border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 13px 15px;
+    cursor: pointer; transition: border-color .14s, background .14s, box-shadow .14s, transform .08s;
+    background: var(--surface);
+  }
+  .option:hover { border-color: var(--border-strong); background: var(--surface-soft); }
+  .option:active { transform: scale(.995); }
+  .option.selected { border-color: var(--primary); background: var(--primary-weak); box-shadow: var(--ring); }
+  .option .marker {
+    flex: none; width: 20px; height: 20px; margin-top: 1px;
+    border: 2px solid var(--border-strong); background:var(--surface); display:grid; place-items:center;
+    transition: border-color .14s, background .14s;
+  }
+  .option[data-type="single"] .marker { border-radius: 50%; }
+  .option[data-type="multi"] .marker { border-radius: 7px; }
+  .option.selected .marker { border-color: var(--primary); background: var(--primary); }
+  .option.selected .marker::after {
+    content: ''; width: 8px; height: 8px; background:#fff; border-radius:2px;
+  }
+  .option[data-type="single"].selected .marker::after { border-radius: 50%; }
+  .option .opt-body { flex: 1; }
+  .opt-label { font-weight: 600; font-size: 14.5px; }
+  .opt-label .rec { font-size:11px; font-weight:700; color:var(--good-strong); margin-left:7px;
+    background:var(--good-weak); border:1px solid var(--good-border); padding:2px 8px; border-radius:999px;
+    vertical-align: middle; }
+  .opt-desc { font-size: 13px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+  .custom-input { margin-top: 9px; width: 100%; border:1.5px solid var(--border-strong);
+    border-radius:9px; padding:9px 11px; font-size:14px; font-family:inherit; display:none;
+    background: var(--surface); color: var(--text); }
+  .custom-input:focus { outline:none; border-color:var(--primary); box-shadow: var(--ring); }
+  .option.selected .custom-input { display:block; }
+
+  /* 확정(locked) 카드 — 선택된 것만 강조, 나머지는 흐리게, 클릭 비활성 */
+  .card.confirmed .options { cursor: default; }
+  .card.confirmed .option { cursor: default; }
+  .card.confirmed .option:hover { border-color: var(--border); background: var(--surface); }
+  .card.confirmed .option.selected { border-color: var(--good-border); background: var(--good-weak); box-shadow:none; }
+  .card.confirmed .option.selected .marker { border-color: var(--good); background: var(--good); }
+  .card.confirmed .option:not(.selected) { opacity: .4; }
+
+  .notes-area { width:100%; min-height:74px; border:1.5px solid var(--border-strong); border-radius:var(--radius-sm);
+    padding:12px 14px; font-size:14px; font-family:inherit; resize:vertical; line-height:1.6;
+    background: var(--surface); color: var(--text); }
+  .notes-area:focus { outline:none; border-color:var(--primary); box-shadow: var(--ring); }
+
+  /* 계획서 본문 렌더 */
+  .plan-body {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 36px 40px; box-shadow: var(--shadow); margin-top: 8px;
+  }
+  .plan-body h1, .plan-body h2, .plan-body h3, .plan-body h4, .plan-body h5, .plan-body h6 {
+    line-height: 1.32; letter-spacing: -.02em; margin: 1.5em 0 .55em; font-weight: 700;
+  }
+  .plan-body > :first-child { margin-top: 0; }
+  .plan-body h1 { font-size: 25px; font-weight: 800; border-bottom: 1px solid var(--border); padding-bottom: .35em; }
+  .plan-body h2 { font-size: 20px; padding-bottom: .25em; }
+  .plan-body h2::before { content:''; display:inline-block; width:4px; height:.95em; margin-right:10px;
+    border-radius:2px; background:var(--primary-grad); vertical-align:-2px; }
+  .plan-body h3 { font-size: 16.5px; }
+  .plan-body h4 { font-size: 15px; color: var(--text-soft); }
+  .plan-body p { margin: .65em 0; font-size: 15px; color: var(--text-soft); }
+  .plan-body ul, .plan-body ol { margin: .55em 0; padding-left: 1.4em; font-size: 15px; color: var(--text-soft); }
+  .plan-body li { margin: .3em 0; }
+  .plan-body li::marker { color: var(--muted-soft); }
+  .plan-body strong { font-weight: 700; color: var(--text); }
+  .plan-body code {
+    background: var(--code-bg); color: var(--code-fg); padding: 2px 7px; border-radius: 7px;
+    font-size: 12.8px; font-family: var(--mono);
+  }
+  .plan-body pre.md-code {
+    background: var(--ink); color: var(--ink-fg); border-radius: var(--radius); padding: 16px 18px;
+    overflow-x: auto; margin: .9em 0; box-shadow: var(--shadow-sm); font-size: 12.8px; line-height: 1.6;
+  }
+  .plan-body pre.md-code code { background: none; color: inherit; padding: 0; font-size: inherit; }
+  .plan-body blockquote {
+    margin: .9em 0; padding: 10px 18px; border-left: 3px solid var(--primary);
+    background: var(--primary-weak); color: var(--text-soft); border-radius: 0 10px 10px 0; font-size: 14px;
+  }
+  .plan-body hr { border: none; border-top: 1px solid var(--border); margin: 1.8em 0; }
+  .plan-body a { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .plan-body a:hover { text-decoration: underline; }
+  .plan-body table {
+    border-collapse: separate; border-spacing: 0; width: 100%; margin: 1em 0; font-size: 13.5px;
+    display: block; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .plan-body th, .plan-body td { border-bottom: 1px solid var(--border); padding: 9px 13px; text-align: left; vertical-align: top; }
+  .plan-body th { background: var(--surface-soft); font-weight: 700; white-space: nowrap; color: var(--text-soft); }
+  .plan-body tbody tr:last-child td { border-bottom: none; }
+  .plan-body tbody tr:nth-child(even) { background: var(--surface-soft); }
+
+  /* 하단 고정 액션 바 */
+  .actionbar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,.78); backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    border-top: 1px solid var(--border); box-shadow: 0 -4px 24px -8px rgba(20,23,33,.12);
+    padding: 14px 20px;
+  }
+  .actionbar-inner { max-width: 860px; margin: 0 auto; display: flex; align-items: center; gap: 11px; }
+  .status { font-size: 13px; color: var(--muted); flex: 1; }
+  .status b { color: var(--text); font-weight: 700; }
+  button {
+    font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+    border-radius: 11px; padding: 11px 18px; border: 1px solid var(--border-strong);
+    background: var(--surface); color: var(--text-soft); transition: filter .14s, background .14s, transform .08s, box-shadow .14s;
+  }
+  button:hover { background: var(--surface-soft); }
+  button:active { transform: scale(.97); }
+  button.primary { background: var(--primary-grad); color:#fff; border-color: transparent;
+    box-shadow: 0 2px 8px -1px rgba(79,70,229,.4); }
+  button.primary:hover { filter: brightness(1.07); }
+  button:disabled { opacity: .45; cursor: not-allowed; transform:none; box-shadow:none; }
+
+  details.preview { margin: 10px 0 24px; }
+  details.preview summary { cursor:pointer; font-size:13px; color:var(--muted); padding:6px 2px;
+    list-style:none; user-select:none; }
+  details.preview summary::-webkit-details-marker { display:none; }
+  details.preview summary::before { content:'▸ '; color:var(--muted-soft); }
+  details.preview[open] summary::before { content:'▾ '; }
+  pre.prompt-out {
+    background:var(--ink); color:var(--ink-fg); border-radius:var(--radius); padding:17px 19px;
+    font-size:13px; line-height:1.65; white-space:pre-wrap; word-break:break-word;
+    font-family: var(--mono); margin: 6px 0 0; box-shadow: var(--shadow-sm);
+  }
+  .toast {
+    position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--ink); color:#fff; padding: 11px 22px; border-radius: 999px;
+    font-size: 14px; font-weight: 600; opacity: 0; pointer-events: none;
+    transition: opacity .22s, transform .22s; box-shadow: var(--shadow-lg); z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* 다크 모드 자동 대응 */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0d10;
+      --bg-grad-1: #14161c;
+      --bg-grad-2: #0c0d10;
+      --surface: #16181d;
+      --surface-soft: #1c1f26;
+      --border: #272a32;
+      --border-strong: #353944;
+      --text: #f0f1f4;
+      --text-soft: #c8cbd3;
+      --muted: #9298a4;
+      --muted-soft: #6b7280;
+      --primary: #8b88ff;
+      --primary-strong: #a5a2ff;
+      --primary-grad: linear-gradient(135deg, #7c83ff 0%, #6366f1 100%);
+      --primary-weak: #1d1f3a;
+      --primary-border: #353a6b;
+      --good: #34d399;
+      --good-strong: #6ee7b7;
+      --good-weak: #13251d;
+      --good-border: #265840;
+      --warn: #fbbf24;
+      --warn-weak: #2a2113;
+      --warn-border: #5c4715;
+      --danger: #f87171;
+      --danger-weak: #2a1718;
+      --danger-border: #5c2b2d;
+      --code-bg: #22252e;
+      --code-fg: #ff8fb1;
+      --ink: #04060a;
+      --ink-fg: #dde0e8;
+      --ring: 0 0 0 4px rgba(139, 136, 255, .18);
+    }
+    .badge.type-feature { background:#1d1f3a; color:#a5a2ff; border-color:#353a6b; }
+    .badge.type-bugfix  { background:#2a1718; color:#f87171; border-color:#5c2b2d; }
+    .badge.type-refactor{ background:#241b3a; color:#c4b5fd; border-color:#3f2f63; }
+    .actionbar { background: rgba(22,24,29,.82); }
+    .card.confirmed { background: linear-gradient(0deg, var(--good-weak), var(--surface) 70%); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="plan-head">
+    <h1 id="p-title"></h1>
+    <p class="plan-summary" id="p-summary"></p>
+    <div class="badges">
+      <span class="badge" id="p-type"></span>
+      <span class="badge scope" id="p-scope"></span>
+    </div>
+  </header>
+
+  <p class="section-title" id="body-title" style="display:none">작업계획서 상세</p>
+  <article class="plan-body" id="plan-body" style="display:none"></article>
+
+  <div class="statusbar" id="statusbar"><span class="dot"></span><span id="statusbar-text"></span></div>
+
+  <div id="decisions-wrap">
+    <p class="section-title" id="decisions-title">결정 사항 — 선택 후 하단 [프롬프트로 복사]</p>
+    <div id="decisions"></div>
+
+    <div class="card" id="notes-card">
+      <h3 class="card-title">추가 메모 (선택)</h3>
+      <p class="card-desc">결정 외에 전달할 제약·우선순위·주의사항이 있으면 적어주세요.</p>
+      <textarea class="notes-area" id="notes" placeholder="예: 마이그레이션은 이번 배포에 포함하지 말 것"></textarea>
+    </div>
+
+    <details class="preview">
+      <summary>복사될 프롬프트 미리보기</summary>
+      <pre class="prompt-out" id="preview"></pre>
+    </details>
+  </div>
+</div>
+
+<div class="actionbar" id="actionbar">
+  <div class="actionbar-inner">
+    <div class="status" id="status"></div>
+    <button id="btn-json">JSON 복사</button>
+    <button class="primary" id="btn-copy">프롬프트로 복사</button>
+  </div>
+</div>
+<div class="toast" id="toast">복사되었습니다</div>
+
+<script>
+(function () {
+  const state = {}; // decisionId -> { picks: Set, custom: '' }
+
+  const el = (tag, cls, html) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (html != null) node.innerHTML = html;
+    return node;
+  };
+  const escapeText = (str) => String(str).replace(/[&<>"]/g, (ch) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+  // decided 값을 배열로 정규화
+  const decidedList = (dec) => {
+    if (dec.decided == null) return null;
+    return Array.isArray(dec.decided) ? dec.decided : [dec.decided];
+  };
+  const isConfirmed = (dec) => decidedList(dec) !== null;
+  // 모든 필수 결정에 decided 가 채워졌는가 → 확정 모드
+  const allConfirmed = () => PLAN.decisions.length > 0 &&
+    PLAN.decisions.every((dec) => !dec.required || isConfirmed(dec));
+
+  // --- 헤더 렌더 ---
+  document.getElementById('p-title').textContent = PLAN.title;
+  document.getElementById('p-summary').textContent = PLAN.summary || '';
+  const typeBadge = document.getElementById('p-type');
+  typeBadge.textContent = PLAN.type;
+  typeBadge.classList.add('type-' + PLAN.type);
+  document.getElementById('p-scope').textContent = '영향 범위: ' + PLAN.scope;
+
+  // --- 결정 카드 렌더 ---
+  const container = document.getElementById('decisions');
+  PLAN.decisions.forEach((dec) => {
+    const confirmed = isConfirmed(dec);
+    const preset = decidedList(dec) || [];
+    state[dec.id] = { picks: new Set(preset), custom: '' };
+
+    const card = el('div', 'card' + (confirmed ? ' confirmed' : ''));
+    card.dataset.id = dec.id;
+    const reqMark = dec.required ? ' *' : '';
+    card.appendChild(el('div', 'card-head',
+      '<h3 class="card-title">' + escapeText(dec.title) + reqMark + '</h3>' +
+      '<span class="pick-tag">' + (dec.type === 'multi' ? '복수 선택' : '택1') + '</span>'));
+    if (dec.desc) card.appendChild(el('p', 'card-desc', escapeText(dec.desc)));
+
+    const opts = el('div', 'options');
+    dec.options.forEach((opt) => {
+      const row = el('div', 'option');
+      row.dataset.type = dec.type;
+      if (preset.includes(opt.label)) row.classList.add('selected');
+      const rec = opt.recommended ? '<span class="rec">추천</span>' : '';
+      const desc = opt.desc ? '<div class="opt-desc">' + escapeText(opt.desc) + '</div>' : '';
+      const customField = opt.custom
+        ? '<input class="custom-input" placeholder="직접 입력" />' : '';
+      row.innerHTML =
+        '<div class="marker"></div>' +
+        '<div class="opt-body"><div class="opt-label">' + escapeText(opt.label) + rec + '</div>' +
+        desc + customField + '</div>';
+      if (!confirmed) {
+        row.addEventListener('click', (ev) => {
+          if (ev.target.classList.contains('custom-input')) return;
+          toggle(dec, opt, row, opts);
+        });
+        const customInput = row.querySelector('.custom-input');
+        if (customInput) customInput.addEventListener('input', () => {
+          state[dec.id].custom = customInput.value;
+          render();
+        });
+      }
+      opts.appendChild(row);
+    });
+    card.appendChild(opts);
+    container.appendChild(card);
+  });
+
+  function toggle(dec, opt, row, opts) {
+    const picks = state[dec.id].picks;
+    if (dec.type === 'single') {
+      picks.clear();
+      opts.querySelectorAll('.option').forEach((node) => node.classList.remove('selected'));
+      picks.add(opt.label);
+      row.classList.add('selected');
+    } else {
+      if (picks.has(opt.label)) { picks.delete(opt.label); row.classList.remove('selected'); }
+      else { picks.add(opt.label); row.classList.add('selected'); }
+    }
+    render();
+  }
+
+  // --- 선택 결과 → 텍스트 ---
+  function valueFor(dec) {
+    const st = state[dec.id];
+    const labels = [...st.picks].map((label) => {
+      const opt = dec.options.find((option) => option.label === label);
+      if (opt && opt.custom && st.custom.trim()) return st.custom.trim();
+      return label;
+    });
+    return labels.join(', ');
+  }
+
+  function unresolved() {
+    return PLAN.decisions.filter((dec) => dec.required && state[dec.id].picks.size === 0);
+  }
+
+  function buildPrompt() {
+    const lines = [];
+    lines.push('[작업계획서 결정사항 확정] ' + PLAN.title);
+    lines.push('');
+    lines.push('아래 결정사항으로 위 계획서를 확정하고 진행해주세요.');
+    lines.push('');
+    PLAN.decisions.forEach((dec, idx) => {
+      const val = valueFor(dec) || '(미결정)';
+      lines.push((idx + 1) + '. ' + dec.title + ': ' + val);
+    });
+    const notes = document.getElementById('notes').value.trim();
+    lines.push('');
+    lines.push('추가 메모: ' + (notes || '(없음)'));
+    return lines.join('\n');
+  }
+
+  function buildJson() {
+    const obj = { title: PLAN.title, decisions: {}, notes: document.getElementById('notes').value.trim() };
+    PLAN.decisions.forEach((dec) => { obj.decisions[dec.title] = valueFor(dec); });
+    return JSON.stringify(obj, null, 2);
+  }
+
+  function render() {
+    PLAN.decisions.forEach((dec) => {
+      const card = container.querySelector('[data-id="' + dec.id + '"]');
+      const tag = card.querySelector('.pick-tag');
+      const decided = state[dec.id].picks.size > 0;
+      card.classList.toggle('unresolved', dec.required && !decided && !isConfirmed(dec));
+      if (decided) {
+        tag.classList.add('done');
+        tag.textContent = (isConfirmed(dec) ? '✅ 확정 · ' : '✓ ') + valueFor(dec);
+      } else {
+        tag.classList.remove('done');
+        tag.textContent = dec.type === 'multi' ? '복수 선택' : '택1';
+      }
+    });
+    const left = unresolved();
+    const status = document.getElementById('status');
+    if (left.length === 0) status.innerHTML = '<b>모든 필수 결정 완료.</b> 복사해서 채팅에 붙여넣으세요.';
+    else status.innerHTML = '필수 결정 <b>' + left.length + '개</b> 남음: ' +
+      left.map((dec) => escapeText(dec.title)).join(', ');
+    document.getElementById('btn-copy').disabled = left.length > 0;
+    document.getElementById('preview').textContent = buildPrompt();
+  }
+
+  // --- 라이프사이클 UI: 결정 콘솔 / 확정 뷰 전환 ---
+  function applyLifecycle() {
+    const confirmed = allConfirmed();
+    const bar = document.getElementById('statusbar');
+    const barText = document.getElementById('statusbar-text');
+    if (confirmed) {
+      bar.className = 'statusbar confirmed';
+      barText.textContent = '✅ 확정 완료 — 위 작업계획서가 확정되었습니다. (아래 결정 카드는 잠금 표시)';
+      document.getElementById('decisions-title').textContent = '확정된 결정 사항';
+      // 확정되면 메모 입력/미리보기/액션바는 감춰 읽기용으로 전환
+      document.getElementById('notes-card').style.display = 'none';
+      document.querySelector('details.preview').style.display = 'none';
+      document.getElementById('actionbar').style.display = 'none';
+      document.querySelector('.wrap').style.paddingBottom = '60px';
+    } else {
+      bar.className = 'statusbar pending';
+      const left = PLAN.decisions.filter((dec) => dec.required && !isConfirmed(dec)).length;
+      barText.textContent = '결정 대기 — 필수 ' + left + '건을 선택해 [프롬프트로 복사] 후 채팅에 붙여넣어 주세요.';
+    }
+  }
+
+  // --- 계획서 본문 렌더 ---
+  renderPlanBody();
+  function renderPlanBody() {
+    const raw = (document.getElementById('plan-md').textContent || '').trim();
+    if (!raw) return;
+    document.getElementById('body-title').style.display = '';
+    const body = document.getElementById('plan-body');
+    body.style.display = '';
+    body.innerHTML = miniMarkdown(raw);
+  }
+
+  // 의존성 없는 경량 마크다운 렌더러 (중첩목록 미지원)
+  function mdEscape(str) {
+    return String(str).replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
+  }
+  function mdInline(str) {
+    let out = mdEscape(str);
+    out = out.replace(/`([^`]+)`/g, (m, code) => '<code>' + code + '</code>');
+    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>');
+    return out;
+  }
+  function mdSplitRow(line) {
+    return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+  }
+  function miniMarkdown(src) {
+    const lines = src.replace(/\r\n/g, '\n').split('\n');
+    let html = '';
+    let idx = 0;
+    const isSpecial = (line) =>
+      /^(#{1,6})\s/.test(line) || /^```/.test(line) || /^\s*\|.*\|\s*$/.test(line) ||
+      /^\s*([-*])\s+/.test(line) || /^\s*\d+\.\s+/.test(line) || /^\s*---+\s*$/.test(line) ||
+      /^\s*>/.test(line) || /^\s*$/.test(line);
+
+    while (idx < lines.length) {
+      const line = lines[idx];
+
+      // 코드 펜스
+      if (/^```/.test(line)) {
+        idx += 1;
+        const buf = [];
+        while (idx < lines.length && !/^```/.test(lines[idx])) { buf.push(lines[idx]); idx += 1; }
+        idx += 1;
+        html += '<pre class="md-code"><code>' + mdEscape(buf.join('\n')) + '</code></pre>';
+        continue;
+      }
+      // 표 (헤더 + 구분선)
+      if (/^\s*\|.*\|\s*$/.test(line) && idx + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[idx + 1])) {
+        const header = mdSplitRow(line);
+        idx += 2;
+        const rows = [];
+        while (idx < lines.length && /^\s*\|.*\|\s*$/.test(lines[idx])) { rows.push(mdSplitRow(lines[idx])); idx += 1; }
+        html += '<table><thead><tr>' + header.map((cell) => '<th>' + mdInline(cell) + '</th>').join('') + '</tr></thead><tbody>';
+        html += rows.map((row) => '<tr>' + row.map((cell) => '<td>' + mdInline(cell) + '</td>').join('') + '</tr>').join('');
+        html += '</tbody></table>';
+        continue;
+      }
+      // 제목
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        const level = heading[1].length;
+        html += '<h' + level + '>' + mdInline(heading[2]) + '</h' + level + '>';
+        idx += 1;
+        continue;
+      }
+      // 구분선
+      if (/^\s*---+\s*$/.test(line)) { html += '<hr>'; idx += 1; continue; }
+      // 인용
+      if (/^\s*>\s?/.test(line)) {
+        const buf = [];
+        while (idx < lines.length && /^\s*>\s?/.test(lines[idx])) { buf.push(lines[idx].replace(/^\s*>\s?/, '')); idx += 1; }
+        html += '<blockquote>' + mdInline(buf.join(' ')) + '</blockquote>';
+        continue;
+      }
+      // 목록
+      if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
+        const ordered = /^\s*\d+\.\s+/.test(line);
+        const buf = [];
+        while (idx < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[idx])) {
+          buf.push(lines[idx].replace(/^\s*([-*]|\d+\.)\s+/, '')); idx += 1;
+        }
+        const items = buf.map((item) => '<li>' + mdInline(item) + '</li>').join('');
+        html += ordered ? '<ol>' + items + '</ol>' : '<ul>' + items + '</ul>';
+        continue;
+      }
+      // 빈 줄
+      if (/^\s*$/.test(line)) { idx += 1; continue; }
+      // 문단
+      const buf = [line];
+      idx += 1;
+      while (idx < lines.length && !isSpecial(lines[idx])) { buf.push(lines[idx]); idx += 1; }
+      html += '<p>' + mdInline(buf.join(' ')) + '</p>';
+    }
+    return html;
+  }
+
+  function copy(text) {
+    navigator.clipboard.writeText(text).then(showToast).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); ta.remove(); showToast();
+    });
+  }
+  let toastTimer;
+  function showToast() {
+    const toast = document.getElementById('toast');
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1600);
+  }
+
+  document.getElementById('btn-copy').addEventListener('click', () => copy(buildPrompt()));
+  document.getElementById('btn-json').addEventListener('click', () => copy(buildJson()));
+
+  document.getElementById('notes').addEventListener('input', render);
+
+  render();
+  applyLifecycle();
+})();
+</script>
+</body>
+</html>
