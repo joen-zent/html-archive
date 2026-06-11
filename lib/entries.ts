@@ -10,6 +10,7 @@ export type Entry = {
   categoryLabel: string;
   scope: string;
   status: string;
+  priority: string;
   dateIso: string;
   dateLabel: string;
 };

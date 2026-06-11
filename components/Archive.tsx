@@ -12,6 +12,10 @@ const STATUS_MAP: Record<string, { label: string; cls: string }> = {
   done: { label: "🟢 완료", cls: styles.badgeGood },
 };
 
+const PRIORITIES = new Set(["P1", "P2", "P3"]);
+
+const PRIORITY_ORDER: Record<string, number> = { P1: 0, P2: 1, P3: 2 };
+
 function categoryBadgeClass(entry: Entry): string {
   if (entry.kind === "history") return styles.badgePurple;
   switch (entry.category) {
@@ -58,7 +62,7 @@ export default function Archive({ entries }: { entries: Entry[] }) {
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return entries.filter((e) => {
+    const filtered = entries.filter((e) => {
       if (e.kind !== tab) return false;
       if (category !== "all" && e.category !== category) return false;
       if (q) {
@@ -67,6 +71,15 @@ export default function Archive({ entries }: { entries: Entry[] }) {
       }
       return true;
     });
+    if (tab === "plan") {
+      filtered.sort((a, b) => {
+        const pa = PRIORITY_ORDER[a.priority] ?? 99;
+        const pb = PRIORITY_ORDER[b.priority] ?? 99;
+        if (pa !== pb) return pa - pb;
+        return a.dateIso < b.dateIso ? 1 : a.dateIso > b.dateIso ? -1 : 0;
+      });
+    }
+    return filtered;
   }, [entries, tab, category, query]);
 
   function switchTab(next: Kind) {
@@ -170,6 +183,11 @@ export default function Archive({ entries }: { entries: Entry[] }) {
                       {status && (
                         <span className={`${styles.badge} ${status.cls}`}>
                           {status.label}
+                        </span>
+                      )}
+                      {PRIORITIES.has(e.priority) && (
+                        <span className={`${styles.badge} ${styles.badgePriority}`}>
+                          {e.priority}
                         </span>
                       )}
                     </span>
