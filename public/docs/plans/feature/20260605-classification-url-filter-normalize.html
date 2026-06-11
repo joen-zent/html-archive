@@ -36,10 +36,11 @@
 -->
 <script id="plan-data">
 const PLAN = {
-  title: '분류 > 근로자 내역 URL 필터 구조 전면 정규화',
+  title: '분류 > URL 파라미터 구조 개선',
   type: 'feature',
   scope: '프론트',
   status: 'planning', // planning | in-progress | done
+  priority: 'P3',
   summary: '근로자 내역 화면의 13개 필터/정렬/보기를 제어하는 URL 파라미터를 정규화한다. URL 제어는 유지(공유·북마크 이점)하되, JSON 통째 인코딩(localSortConfigs)을 개별 파라미터로 평탄화하고 모든 파라미터에 clearOnDefault를 적용해 "사용자가 실제로 바꾼 필터만" URL에 남도록 한다. 정렬·보기는 클라이언트 처리이므로 API 변경 없음.',
 
   decisions: [
