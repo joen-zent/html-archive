@@ -92,8 +92,8 @@ type Entry = {
 ### 2-2. 상태 배지 매핑
 
 ```
-planning     → "🟡 계획"   (warn 색)
-in-progress  → "🔵 진행중"  (primary 색)
+planning     → "🟡 할 일"   (warn 색)
+in-progress  → "🔵 진행중"  (primary 색)  ← 데이터에 들어오지 않음(미사용)
 done         → "🟢 완료"   (good 색)
 ```
 

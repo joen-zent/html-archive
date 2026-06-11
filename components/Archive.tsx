@@ -7,7 +7,7 @@ import styles from "./Archive.module.css";
 type Kind = "plan" | "history";
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
-  planning: { label: "🟡 계획", cls: styles.badgeWarn },
+  planning: { label: "🟡 할 일", cls: styles.badgeWarn },
   "in-progress": { label: "🔵 진행중", cls: styles.badgePrimary },
   done: { label: "🟢 완료", cls: styles.badgeGood },
 };
@@ -86,7 +86,7 @@ export default function Archive({ entries }: { entries: Entry[] }) {
           <span className={styles.stat}>
             <span className={`${styles.statDot} ${styles.dotPrimary}`} />
             <span className={styles.statNum}>{planCount}</span>
-            <span className={styles.statLabel}>작업</span>
+            <span className={styles.statLabel}>할 일</span>
           </span>
           <span className={styles.stat}>
             <span className={`${styles.statDot} ${styles.dotGood}`} />
@@ -148,35 +148,36 @@ export default function Archive({ entries }: { entries: Entry[] }) {
       {visible.length === 0 ? (
         <div className={styles.empty}>표시할 항목이 없습니다.</div>
       ) : (
-        <section className={styles.grid}>
+        <section className={styles.list}>
           {visible.map((e) => {
             const status = STATUS_MAP[e.status];
             return (
               <a
                 key={e.href}
-                className={styles.card}
+                className={styles.row}
                 href={e.href}
                 target="_blank"
                 rel="noreferrer"
               >
-                <div className={styles.badges}>
-                  <span className={`${styles.badge} ${categoryBadgeClass(e)}`}>
-                    {e.categoryLabel || e.category}
-                  </span>
-                  {status && (
-                    <span className={`${styles.badge} ${status.cls}`}>
-                      {status.label}
+                <div className={styles.rowMain}>
+                  <div className={styles.rowHead}>
+                    <span className={styles.badges}>
+                      <span
+                        className={`${styles.badge} ${categoryBadgeClass(e)}`}
+                      >
+                        {e.categoryLabel || e.category}
+                      </span>
+                      {status && (
+                        <span className={`${styles.badge} ${status.cls}`}>
+                          {status.label}
+                        </span>
+                      )}
                     </span>
-                  )}
-                  {e.scope && (
-                    <span className={`${styles.badge} ${styles.badgeScope}`}>
-                      {e.scope}
-                    </span>
-                  )}
+                    <h2 className={styles.rowTitle}>{e.title}</h2>
+                  </div>
+                  <p className={styles.rowSummary}>{e.summary}</p>
                 </div>
-                <h2 className={styles.cardTitle}>{e.title}</h2>
-                <p className={styles.cardSummary}>{e.summary}</p>
-                <div className={styles.cardFooter}>
+                <div className={styles.rowMeta}>
                   <span className={styles.date}>{e.dateLabel}</span>
                   <span className={styles.open}>문서 열기 →</span>
                 </div>
