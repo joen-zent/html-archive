@@ -6,70 +6,54 @@
 <title>작업계획서</title>
 <script id="plan-data">
 const PLAN = {
-  title: 'DealFlowButtons 단계 변경 즉시 반영 버그 수정',
+  title: '단계 변경 확인 모달 DialogTitle 접근성 경고 개선',
   type: 'bugfix',
-  scope: '프론트 (+ API 확인)',
+  scope: '프론트',
   status: 'planning', // planning | in-progress | done
-  mdFile: 'plans/bugfix/20260602-deal-flow-buttons-즉시반영.md',
-  summary: 'deal/[id]/classification 단계 변경 시 발견된 버그 3종(API 500 · DialogTitle 누락 · SWR mutate 타이밍) 수정',
+  mdFile: 'plans/bugfix/20260602-dialog-title-접근성-경고.md',
+  summary: 'deal/[id]/classification 단계 변경 확인 모달이 열릴 때 출력되는 DialogTitle 접근성 경고 제거',
 
   decisions: [
     {
-      id: 'api-500',
-      title: 'API 500 에러 대응',
-      desc: 'PATCH /deals/{id}/task-type 500 응답 원인 처리 범위.',
+      id: 'title-approach',
+      title: 'DialogTitle 노출 방식',
+      desc: 'DialogContent에 추가할 DialogTitle을 화면에 보일지 여부.',
       type: 'single',
       required: true,
       options: [
         {
-          label: 'B — API-engineer 병행 투입',
-          desc: '500은 서버 미처리 예외 가능성이 높아 백엔드까지 확실히 수정.',
+          label: 'X — VisuallyHidden 숨김 제목',
+          desc: '스크린리더 전용 숨김 제목만 추가. 현재 UI 시각적 변화 없음.',
           recommended: true,
         },
         {
-          label: 'A — 프론트 수정만',
-          desc: 'taskType 형식 변경으로 해결될 수도 있으나, 서버 버그라면 미해결.',
+          label: 'Y — 화면에 보이는 제목',
+          desc: '모달 상단에 실제로 보이는 제목 추가. 디자인 변경 동반.',
         },
       ],
-      // decided: 'B — API-engineer 병행 투입',
-    },
-    {
-      id: 'mutate-approach',
-      title: 'mutate 수정 방식',
-      desc: 'API 성공 후 화면 즉시 갱신 구현 방식.',
-      type: 'single',
-      required: true,
-      options: [
-        {
-          label: 'X — global mutate (파일 1개)',
-          desc: 'SWR 전역 mutate로 키를 명시 → UpdateTaskTypeModal.tsx 1개만 수정. 가장 간단.',
-          recommended: true,
-        },
-        {
-          label: 'Y — onSuccess prop 패턴 (파일 3개)',
-          desc: 'useDealFlow에서 mutate 노출 → DealFlowButtons에서 prop 전달. 기존 훅 패턴 유지.',
-        },
-      ],
-      // decided: 'X — global mutate (파일 1개)',
+      // decided: 'X — VisuallyHidden 숨김 제목',
     },
   ],
 }
 </script>
 
 <script id="plan-md" type="text/markdown">
-# DealFlowButtons 단계 변경 즉시 반영 버그 수정
+# 단계 변경 확인 모달 DialogTitle 접근성 경고 개선
 
 ## 1. 개요
 - 작업 유형: bugfix
-- 요청 사항: `deal/[id]/classification` 페이지에서 단계 버튼 클릭 후 화면 상태가 즉시 갱신되지 않는 문제 수정
-- 영향 범위: 프론트 (+ API 500 에러 원인 따라 백엔드 확인 필요)
-- 확인된 버그 3종:
-  1. **API 500 에러**: `PATCH /deals/{id}/task-type` 호출 시 서버 500 응답 (단계 변경 자체가 실패)
-  2. **접근성 경고**: `DialogContent` 내 `DialogTitle` 누락
-  3. **SWR mutate 타이밍**: API 성공 시에도 화면이 즉시 갱신되지 않는 문제 (모달 언마운트 경쟁)
+- 요청 사항: `deal/[id]/classification` 단계 변경 확인 모달이 열릴 때 콘솔에 출력되는 `DialogTitle` 접근성 경고 제거
+- 영향 범위: 프론트 전용
+- 콘솔 경고:
+  ```
+  `DialogContent` requires a `DialogTitle` for the component to be accessible for screen reader users.
+
+  If you want to hide the `DialogTitle`, you can wrap it with our VisuallyHidden component.
+
+  For more information, see https://radix-ui.com/primitives/docs/components/dialog
+  ```
 - 사용자 결정 사항:
-  - API 500 대응: **(A) 프론트 수정만** 또는 **(B) API-engineer 병행 투입**
-  - mutate 수정 방식: **(X) global mutate** 또는 **(Y) onSuccess prop 패턴**
+  - DialogTitle 노출 방식: **(X) VisuallyHidden 숨김 제목** 또는 **(Y) 화면에 보이는 제목**
 
 ---
 
@@ -78,70 +62,24 @@ const PLAN = {
 ### 파일 구조
 ```
 apps/works/app/deal/[id]/classification/
-├── page.tsx                           # 서버 컴포넌트
 ├── _components/
-│   ├── DealFlowButtons.tsx            # 단계 버튼 UI
-│   └── UpdateTaskTypeModal.tsx        # 단계 변경 확인 모달 (버그 집중 위치)
-└── hooks/
-    └── useDealFlow.ts                 # SWR 훅 래퍼
+│   └── UpdateTaskTypeModal.tsx        # 단계 변경 확인 모달 (경고 발생 위치)
 ```
 
----
+### 원인
+Radix UI의 `Dialog`는 스크린리더 접근성을 위해 `DialogContent` 내부에 `DialogTitle`이 존재할 것을 요구한다. `UpdateTaskTypeModal.tsx`는 `DialogContent` 내부를 직접 `div`로만 구성하고 `DialogTitle`을 두지 않아, 모달이 열릴 때마다 위 경고가 콘솔에 출력된다.
 
-### 버그 1 — API 500 에러 (최우선)
-
-**재현**: 모달에서 확인 클릭 → `PATCH /deals/{id}/task-type` → 500 Internal Server Error
-
-**프론트 요청 코드** (`UpdateTaskTypeModal.tsx`):
-```typescript
-await dealControllerUpdateTaskTypeOfDeal(searchParams?.id, {
-  taskType: String(selectTaskType)   // 숫자 enum → "0", "1", "2" ... 문자열
-})
-```
-
-**의심 원인**:
-- `String(selectTaskType)`으로 숫자 enum 값(`0`, `1` …)을 문자열(`"0"`, `"1"` …)로 변환하여 전송
-- DTO 타입은 `taskType: string`이므로 형식 오류는 아님
-- 그러나 백엔드가 `"WAITING_FRO_SURVEY"` 같은 enum 이름을 기대하거나, Prisma 레벨에서 유효성 검사 실패 시 500 발생 가능
-- 400/422 대신 500이 응답되는 것은 **서버 미처리 예외**를 시사 → 백엔드 수정이 필요할 가능성 높음
-
----
-
-### 버그 2 — DialogTitle 누락 (접근성 경고)
-
-**에러 메시지**:
-```
-DialogContent requires a DialogTitle for the component to be accessible for screen reader users.
-```
-
-**원인**: `UpdateTaskTypeModal.tsx`에서 `DialogContent` 내부를 직접 `div`로 구성하여 `DialogTitle`이 없음.
-
-**수정**: `DialogTitle`(또는 `VisuallyHidden`으로 감싼 숨김 제목) 추가.
-
----
-
-### 버그 3 — SWR mutate 타이밍 (API 성공 시)
-
-API가 정상 응답하더라도 화면 갱신이 안 되는 문제.
-
-**재현 흐름**:
-1. 확인 클릭 → PATCH API 성공 → `mutate()` 호출 (`await` 없음)
-2. `finally` 블록 → 즉시 `onCloseModal()` → Dialog 닫힘
-3. `UpdateTaskTypeModal` 언마운트 → 내부 SWR 훅 언마운트
-4. `DealFlowButtons` SWR 인스턴스가 갱신 안 됨
-
-**핵심 코드** (`UpdateTaskTypeModal.tsx`):
-```typescript
-mutate()        // await 없이 호출 → revalidation 시작만 함
-// finally:
-onCloseModal()  // 즉시 모달 닫힘 → SWR 훅 언마운트 → revalidation 전파 실패
-```
+- 기능 동작 자체에는 문제 없음 (경고 레벨)
+- 스크린리더 사용자에게 다이얼로그 제목이 전달되지 않는 접근성 결함
+- 콘솔 경고가 반복 출력되어 다른 로그를 가린다
 
 ---
 
 ## 3. 수정 방안
 
-### 버그 2 수정 — DialogTitle 추가 (프론트, 무조건 수정)
+### X — VisuallyHidden 숨김 제목 (추천)
+
+기존 UI를 그대로 두고 스크린리더 전용 숨김 제목만 추가한다. 시각적 변화 없음.
 
 ```typescript
 import { DialogContent, DialogTitle } from '@brics/ui/dialog'
@@ -151,82 +89,48 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden'
   <VisuallyHidden>
     <DialogTitle>단계 변경 확인</DialogTitle>
   </VisuallyHidden>
+  {/* 기존 내용 그대로 */}
+</DialogContent>
+```
+
+### Y — 화면에 보이는 제목
+
+모달 상단에 실제로 보이는 제목을 추가한다. 디자인 변경이 동반된다.
+
+```typescript
+import { DialogContent, DialogTitle } from '@brics/ui/dialog'
+
+<DialogContent className="flex flex-col w-96">
+  <DialogTitle className="text-lg font-semibold">단계 변경 확인</DialogTitle>
   {/* 기존 내용 */}
 </DialogContent>
 ```
 
 ---
 
-### 버그 3 수정 방안 — X: global mutate (파일 1개, 추천)
-
-SWR 전역 `mutate`로 키를 명시하여 모든 구독자를 즉시 갱신.
-
-**`UpdateTaskTypeModal.tsx`만 수정**:
-```typescript
-import { mutate as globalMutate } from 'swr'
-import { getDealControllerGetBusinessInfoKey } from '@/swr'
-
-await dealControllerUpdateTaskTypeOfDeal(...)
-toast({ title: '성공적으로 변경하였습니다.' })
-await globalMutate(getDealControllerGetBusinessInfoKey(searchParams?.id))
-// finally: onCloseModal()
-```
-
----
-
-### 버그 3 수정 방안 — Y: onSuccess prop 패턴 (파일 3개)
-
-`DealFlowButtons`가 직접 `mutate`를 소유하고 모달에 콜백으로 전달.
-
-**`hooks/useDealFlow.ts`**: `mutate` 반환 추가
-**`DealFlowButtons.tsx`**: `<UpdateTaskTypeModal onSuccess={mutate} />`
-**`UpdateTaskTypeModal.tsx`**: `await mutate()` + `await onSuccess?.()`
-
----
-
 ## 4. 방안 비교
 
-### API 500 대응
-
-| 항목 | A — 프론트 수정만 | B — API-engineer 병행 |
-|------|-----------------|----------------------|
-| 처리 속도 | 빠름 | 느림 (병행 조사 필요) |
-| 해결 가능성 | taskType 형식 변경으로 해결될 수도 있음 | 서버 예외 처리까지 확실히 수정 |
-| 위험 | 500의 근본 원인이 서버 버그라면 미해결 | — |
-| 추천 | — | **추천** (500은 서버 미처리 예외 가능성 높음) |
-
-### mutate 수정 방식
-
-| 항목 | X — global mutate | Y — onSuccess prop |
-|------|------------------|--------------------|
-| 변경 파일 수 | 1개 | 3개 |
-| 코드 복잡도 | 낮음 | 중간 (prop 드릴링) |
-| 패턴 일관성 | SWR 전역 API 직접 사용 | 기존 SWR 훅 패턴 유지 |
-| 추천 | **추천** | — |
+| 항목 | X — VisuallyHidden | Y — 보이는 제목 |
+|------|--------------------|-----------------|
+| 시각적 변화 | 없음 | 있음 (제목 노출) |
+| 접근성 | 충족 | 충족 |
+| 디자인 검토 | 불필요 | 필요 |
+| 추천 | **추천** (현재 UI 유지) | — |
 
 ---
 
 ## 5. 작업 배분
 
-### A 선택 시 (프론트만)
-
 | 담당 | 작업 내용 | 의존성 |
 |------|----------|--------|
-| Front-engineer | `UpdateTaskTypeModal.tsx`: DialogTitle 추가 + taskType 형식 검토 + mutate 수정 | 없음 |
-
-### B 선택 시 (병행)
-
-| 담당 | 작업 내용 | 의존성 |
-|------|----------|--------|
-| Front-engineer | `UpdateTaskTypeModal.tsx`: DialogTitle 추가 + mutate 수정 | 없음 |
-| API-engineer | `PATCH /deals/{id}/task-type` 500 원인 파악 및 수정 | 없음 |
+| Front-engineer | `UpdateTaskTypeModal.tsx`: `DialogContent` 내부에 `DialogTitle` 추가 (선택한 방식대로) | 없음 |
 
 ---
 
 ## 6. 영향 범위
 
-- `deal/[id]/classification` 페이지의 `DealFlowButtons` / `UpdateTaskTypeModal` 동작 변경
-- API-engineer 투입 시 백엔드 `deals` 관련 핸들러 수정 포함
+- `deal/[id]/classification` 단계 변경 확인 모달에 `DialogTitle` 추가
+- X 선택 시 시각적 변화 없음 / Y 선택 시 모달 상단 제목 노출
 - 다른 페이지/컴포넌트 영향 없음
 </script>
 

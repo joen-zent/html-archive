@@ -61,12 +61,12 @@
   },
   {
     "kind": "plan",
-    "href": "/docs/plans/bugfix/20260602-deal-flow-buttons-즉시반영.html",
-    "title": "DealFlowButtons 단계 변경 즉시 반영 버그 수정",
-    "summary": "deal/[id]/classification 단계 변경 시 발견된 버그 3종(API 500 · DialogTitle 누락 · SWR mutate 타이밍) 수정",
+    "href": "/docs/plans/bugfix/20260602-dialog-title-접근성-경고.html",
+    "title": "단계 변경 확인 모달 DialogTitle 접근성 경고 개선",
+    "summary": "deal/[id]/classification 단계 변경 확인 모달이 열릴 때 출력되는 DialogTitle 접근성 경고 제거",
     "category": "bugfix",
     "categoryLabel": "버그·개선",
-    "scope": "프론트 (+ API 확인)",
+    "scope": "프론트",
     "status": "planning",
     "dateIso": "2026-06-02",
     "dateLabel": "2026.06.02"
